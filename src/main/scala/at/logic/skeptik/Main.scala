@@ -1,5 +1,8 @@
 package at.logic.skeptik
 
+// Quick and Dirty imports
+import at.logic.skeptik.parser.SMT2Parser
+
 object Main {
   def main(args: Array[String]): Unit = {
     def help() = print(usageInstructions)
@@ -20,6 +23,13 @@ object Main {
     }
     else if (args(0) == "-compress") {
       
+    }
+    else if (args(0) == "-quickndirty") {
+      args.tail.foreach { (filename) =>
+        val parser = new at.logic.skeptik.parser.SMT2Parser(filename)
+        parser.getProof
+        println(filename + " " + (1 to 10).map(parser.clauseSize.getOrElse(_,0)))
+      }
     }
     else help()
   }

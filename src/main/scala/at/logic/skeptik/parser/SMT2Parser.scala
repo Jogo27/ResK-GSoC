@@ -15,6 +15,7 @@ extends JavaTokenParsers with RegexParsers {
   
   private val proofMap = new MMap[String,SequentProof]
   private val exprMap  = new MMap[String,E]
+  val clauseSize = MMap[Int,Int]()
 
   def proof: Parser[List[SequentProof]] = rep(line)
   def line: Parser[SequentProof] = "(set"  ~> name ~ "(" ~ inference <~ "))" ^^ {
@@ -24,7 +25,12 @@ extends JavaTokenParsers with RegexParsers {
 
   def inference: Parser[SequentProof] = (resolution | input)
   def resolution: Parser[SequentProof] = "resolution" ~> clauses <~ conclusion ^^ {
-    list => list.tail.foldLeft(list.head) { (left,right) => CutIC(left,right) }
+    list => CutIC(list.tail.dropRight(1).foldLeft(list.head) { (left,right) =>
+                    val result = CutIC(left,right)
+                    val resultSize = result.conclusion.ant.size + result.conclusion.suc.size
+                    clauseSize(resultSize) = clauseSize.getOrElse(resultSize,0) + 1
+                    result
+                  },list.last)
   }
   def input: Parser[SequentProof] = name ~> opt(clauses) ~> conclusion ^^ {
     list => new Axiom(Sequent(list))

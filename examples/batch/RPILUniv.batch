@@ -1,0 +1,11 @@
+Task RPILUniv [
+  RPI,
+  LUniv,
+  RPI.LUniv,
+  RPI3LUniv
+]
+Operation RPI.LUniv = (RPI*LUniv)
+Job RPILUniv {
+  tasks: [ RPILUniv ]
+}
+run [ RPILUniv ]

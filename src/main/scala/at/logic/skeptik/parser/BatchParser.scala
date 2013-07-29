@@ -8,7 +8,7 @@ import at.logic.skeptik.proof.Proof
 import at.logic.skeptik.proof.sequent.{SequentProofNode => N}
 
 
-class BatchParser
+object BatchParser
 extends JavaTokenParsers with RegexParsers {
   
   def batch: Parser[Batch] = rep(line) ^^ { list => 
@@ -23,7 +23,7 @@ extends JavaTokenParsers with RegexParsers {
 
   def command: Parser[BatchData] = runCmd
 
-  def runCmd: Parser[RunBatchData] = "run" ~> rep1sep(name, ",") <~ "." ^^ (RunBatchData(_))
+  def runCmd: Parser[RunBatchData] = "run" ~> "[" ~> rep1sep(name, ",") <~ "]" ^^ (RunBatchData(_))
 
   // Declarations
 
@@ -78,15 +78,14 @@ extends JavaTokenParsers with RegexParsers {
 
   def quotedString: Parser[String] = '"' ~> """[^"]*""".r <~ '"'
 
-  def name: Parser[String] = """[^ (){}\[\]:,.]+""".r
+  def name: Parser[String] = """[^ (){}\[\]:=,]+""".r
 
-  def read(input: InputStreamReader) = {
-    parse(batch, input) match {
+  def read(input: InputStreamReader) = 
+    parseAll(batch, input) match {
       case Success(p,_) => p // TODO
       case Failure(message,_) => throw new Exception("Failure: " + message)
       case Error(message,_) => throw new Exception("Error: " + message)
     }
-  }
 
 }
 

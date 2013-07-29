@@ -60,7 +60,7 @@ extends JavaTokenParsers with RegexParsers {
     case ~(~(name, _), list) => TaskBatchData(name, list)
   }
 
-  def taskOp: Parser[(String, List[String])] = name ~ opt("reporting" ~> rep1sep(name, ",")) ^^ {
+  def taskOp: Parser[(String, List[String])] = name ~ opt("reporting" ~> "[" ~> rep1sep(name, ",") <~ "]") ^^ {
     case ~(name, Some(list)) => (name, list)
     case ~(name, None) => (name, List())
   }
@@ -78,7 +78,7 @@ extends JavaTokenParsers with RegexParsers {
 
   def quotedString: Parser[String] = '"' ~> """[^"]*""".r <~ '"'
 
-  def name: Parser[String] = """[^ (){}\[\]:=,]+""".r
+  def name: Parser[String] = """[^ (){}\[\]:=,"\n]+""".r
 
   def read(input: InputStreamReader) = 
     parseAll(batch, input) match {
@@ -110,9 +110,9 @@ case class RunBatchData(val list: List[String]) extends BatchData
 case class JobBatchData() extends BatchData {
   var name = "undef"
 
-  private val proofs = Queue[String]()
-  private val tasks  = Queue[String]()
-  private val reports= Queue[String]()
+  val proofs = Queue[String]()
+  val tasks  = Queue[String]()
+  val reports= Queue[String]()
 
   def addProofs (nProofs:  Seq[String]) = { proofs  ++= nProofs  }
   def addTasks  (nTasks:   Seq[String]) = { tasks   ++= nTasks   }

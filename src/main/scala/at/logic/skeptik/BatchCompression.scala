@@ -1,14 +1,17 @@
 package at.logic.skeptik
 
 import java.io.{InputStreamReader, FileReader}
-import collection.immutable.{Queue => IQueue, HashMap => IMap, Seq => ISeq}
+import collection.immutable.{Queue => IQueue, HashMap => IMap, Seq => ISeq, HashSet => ISet}
 import collection.mutable.{Queue => MQueue, HashMap => MMap}
 
 import at.logic.skeptik.proof.Proof
 import at.logic.skeptik.proof.sequent.{SequentProofNode => N}
 import at.logic.skeptik.algorithm.compressor.algorithms
+import at.logic.skeptik.util.time._
+import at.logic.skeptik.proof.measure
 
-import at.logic.skeptik.parser.{BatchParser, Batch, JobBatchData, TaskBatchData, OpBatchData}
+import at.logic.skeptik.parser.{BatchParser, Batch, JobBatchData, TaskBatchData, OpBatchData, ProofParserVeriT, ProofParserSkeptik}
+import at.logic.skeptik.util.Report._
 
 object BatchCompression {
   def parseArgs(args: Array[String]): (InputStreamReader, TraversableOnce[String]) = args.toList match {
@@ -40,11 +43,30 @@ object BatchCompression {
 }
 
 class Runner(val job: Job) {
-  def run() = for (proof <- job.proofs) {
-    print("\nReading proof "+proof+"\n")
-    val task = job.tasks(proof)
-    for (op <- task.operations)
-      print("  compress with "+op.name+"\n")
+  def run() =  {
+    for (filename <- job.proofs) {
+      val task = job.tasks(filename)
+
+      val proofFormat = ("""\.[^\.]+$""".r findFirstIn filename) getOrElse { throw new Exception("unknown Format "+filename) }
+      val proofParser = proofFormat match {
+        case ".smt2"  => ProofParserVeriT
+        case ".skeptik"  => ProofParserSkeptik
+      }
+      val Timed(proof, tRead) = timed { proofParser.read(filename) }
+      val m = measure(proof)
+
+      for (report <- task.allReports)
+        report.newProof(filename, proof, tRead, m)
+
+      for (op <- task.operations) {
+        val Timed(compressed, tOp) = timed { op.algorithm(proof) }
+        val m = measure(compressed)
+        for (report <- op.reports)
+          report.newOp(op.name, compressed, tOp, m)
+      }
+    }
+    for (report <- job.allReports)
+      report.terminate()
   }
 }
 object Runner {
@@ -69,7 +91,7 @@ class Compiler(val batch: Batch, val defaultProofs: TraversableOnce[String]) {
     case None => algorithms(name)
   }
 
-  def getReport(name: String): Report = throw new Exception("No such report")
+  def getReport(name: String): Report = new HumanReadable()
 }
 
 class Job(var proofs: IQueue[String], var tasks: IMap[String, Task]) {
@@ -85,6 +107,7 @@ class Job(var proofs: IQueue[String], var tasks: IMap[String, Task]) {
     }
     ret
   }
+  lazy val allReports = (ISet[Report]() /: tasks){ (acc, pair) => acc ++ pair._2.allReports }
 }
 object Job {
   def apply(): Job = { new Job(IQueue[String](), IMap[String, Task]()) }
@@ -107,6 +130,7 @@ class Task(val operations: ISeq[Operation]) {
   def + (report: Report): Task = new Task(operations map {_ + report})
   def + (reports: TraversableOnce[Report]): Task = new Task(operations map {_ + reports})
   def ++ (other: Task): Task = new Task(operations ++ other.operations)
+  lazy val allReports = (ISet[Report]() /: operations){ (acc, op) => acc ++ op.reports }
 }
 object Task {
   def apply(batchData: TaskBatchData, compiler: Compiler): Task = {
@@ -114,12 +138,10 @@ object Task {
   }
 }
 
-class Operation(val name: String, algorithm: Proof[N] => Proof[N], reports: Seq[Report]) {
+class Operation(val name: String, val algorithm: Proof[N] => Proof[N], val reports: Seq[Report]) {
   def + (report: Report): Operation = new Operation(name, algorithm, reports :+ report)
   def + (nReports: TraversableOnce[Report]): Operation = new Operation(name, algorithm, reports ++ nReports)
 }
 object Operation {
   def apply(op: OpBatchData) = { new Operation(op.name, op.algorithm, List[Report]()) }
 }
-
-abstract class Report extends ((Unit, String, Unit) => Unit)

@@ -6,4 +6,7 @@ case class Measurements(length:Int, width:Int, height: Int) {
                           "height = " + height + "  "
   
   def toSeq = Seq(length, width, height)
+
+  def +(other: Measurements) =
+    Measurements(length + other.length, width + other.width, height + other.height)
 }

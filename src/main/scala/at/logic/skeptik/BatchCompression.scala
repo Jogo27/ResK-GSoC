@@ -77,21 +77,23 @@ object Runner {
 }
 
 class Compiler(val batch: Batch, val defaultProofs: TraversableOnce[String]) {
-  val jobs = MMap[String,Job]()
-  val tasks= MMap[String,Task]()
-//  val ops  = MMap[String,Operation]()
+  val jobs   = MMap[String,Job]()
+  val tasks  = MMap[String,Task]()
+  val reports= MMap[String,Report](
+    "HumanReadable" -> new HumanReadableReport(),
+    "Verify"        -> new VerificationReport()
+    )
 
   def compile(): Job = (batch.run map getJob) reduce {_ + _}
 
   def getJob (name: String): Job       = jobs.getOrElseUpdate (name, { Job     (batch.jobs(name), this) })
   def getTask(name: String): Task      = tasks.getOrElseUpdate(name, { Task   (batch.tasks(name), this) })
-//  def getOp  (name: String): Operation = ops.getOrElseUpdate  (name, { Operation(batch.ops(name), this) })
   def getAlgo(name: String): (Proof[N] => Proof[N]) = batch.ops.get(name) match {
     case Some(OpBatchData(_,algo)) => algo
     case None => algorithms(name)
   }
 
-  def getReport(name: String): Report = new HumanReadable()
+  def getReport(name: String): Report = reports(name)
 }
 
 class Job(var proofs: IQueue[String], var tasks: IMap[String, Task]) {

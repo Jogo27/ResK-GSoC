@@ -4,15 +4,15 @@ import collection.mutable.{HashMap => MMap}
 
 import at.logic.skeptik.proof.{Proof, Measurements}
 import at.logic.skeptik.proof.sequent.{SequentProofNode => N}
+import at.logic.skeptik.judgment.Sequent
 
 abstract class Report {
-  def init():Unit = ()
   def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = ()
   def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = ()
   def terminate():Unit = ()
 }
 
-class HumanReadable
+class HumanReadableReport
 extends Report {
   var m = Measurements(0,0,0)
   val cumul = MMap[String, (Measurements, Double, Measurements)]()
@@ -45,5 +45,21 @@ extends Report {
             op.length, percent(pr.length,op.length),
             op.width,  percent(pr.width,op.width),
             op.height, percent(pr.height,op.height) )
+  }
+}
+
+class VerificationReport
+extends Report {
+  var conclusion : Option[Sequent] = None
+  var proofname = ""
+  
+  override def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
+    conclusion = Some(proof.root.conclusion)
+    proofname = name
+  }
+
+  override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = conclusion match {
+    case Some(c) if proof.root.conclusion subsequentOf c => ()
+    case _ => println("Error with "+name+" on "+proofname)
   }
 }

@@ -7,6 +7,6 @@ Task RPILUniv [
 Operation RPI.LUniv = (RPI*LUniv)
 Job RPILUniv {
   tasks: [ RPILUniv ],
-  reports: [ HumanReadable ]
+  reports: [ Verify, HumanReadable ]
 }
 run [ RPILUniv ]

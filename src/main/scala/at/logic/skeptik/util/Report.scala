@@ -60,7 +60,7 @@ extends Report {
 
   override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = conclusion match {
     case Some(c) if proof.root.conclusion subsequentOf c => ()
-    case _ => println("Error with "+name+" on "+proofname)
+    case _ => println(name+": error on "+proofname+", expected "+conclusion+" got "+proof.root.conclusion)
   }
 }
 
@@ -80,23 +80,22 @@ extends Report {
     if (curBest != curWorse) {
       for (op <- curBestOp)
         countBest(op) = countBest.getOrElse(op, 0) + 1
-      curBestOp.clear
-
       for (op <- curWorseOp)
         countWorse(op) = countWorse.getOrElse(op, 0) + 1
-      curWorseOp.clear
     }
 
+    curBestOp.clear
+    curWorseOp.clear
     n += 1
   }
 
   override def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = endProof
 
   override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
-    if (curBestOp.isEmpty || (measure.length < curBest)) { curBest = measure.length ; curBestOp.clear }
+    if (curBestOp.isEmpty || (measure.length < curBest)) { curBest = measure.length ; curBestOp.clear() }
     if (measure.length == curBest) curBestOp += name
     
-    if (curWorseOp.isEmpty || (measure.length > curWorse)) { curWorse = measure.length ; curWorseOp.clear }
+    if (curWorseOp.isEmpty || (measure.length > curWorse)) { curWorse = measure.length ; curWorseOp.clear() }
     if (measure.length == curWorse) curWorseOp += name
   }
 

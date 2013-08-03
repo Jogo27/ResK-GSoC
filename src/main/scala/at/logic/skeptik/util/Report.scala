@@ -77,13 +77,15 @@ extends Report {
   var n = -1
 
   private def endProof() = {
-    for (op <- curBestOp)
-      countBest(op) = countBest.getOrElse(op, 0) + 1
-    curBestOp.clear
+    if (curBest != curWorse) {
+      for (op <- curBestOp)
+        countBest(op) = countBest.getOrElse(op, 0) + 1
+      curBestOp.clear
 
-    for (op <- curWorseOp)
-      countWorse(op) = countWorse.getOrElse(op, 0) + 1
-    curWorseOp.clear
+      for (op <- curWorseOp)
+        countWorse(op) = countWorse.getOrElse(op, 0) + 1
+      curWorseOp.clear
+    }
 
     n += 1
   }

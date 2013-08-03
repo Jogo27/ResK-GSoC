@@ -1,6 +1,6 @@
 package at.logic.skeptik.util.Report
 
-import collection.mutable.{HashMap => MMap}
+import collection.mutable.{HashMap => MMap, HashSet => MSet}
 
 import at.logic.skeptik.proof.{Proof, Measurements}
 import at.logic.skeptik.proof.sequent.{SequentProofNode => N}
@@ -61,5 +61,50 @@ extends Report {
   override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = conclusion match {
     case Some(c) if proof.root.conclusion subsequentOf c => ()
     case _ => println("Error with "+name+" on "+proofname)
+  }
+}
+
+class BestWorseReport
+extends Report {
+  var curBest = 0
+  val curBestOp = MSet[String]()
+  val countBest = MMap[String, Int]()
+
+  var curWorse = 0
+  val curWorseOp = MSet[String]()
+  val countWorse = MMap[String, Int]()
+
+  var n = -1
+
+  private def endProof() = {
+    for (op <- curBestOp)
+      countBest(op) = countBest.getOrElse(op, 0) + 1
+    curBestOp.clear
+
+    for (op <- curWorseOp)
+      countWorse(op) = countWorse.getOrElse(op, 0) + 1
+    curWorseOp.clear
+
+    n += 1
+  }
+
+  override def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = endProof
+
+  override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
+    if (curBestOp.isEmpty || (measure.length < curBest)) { curBest = measure.length ; curBestOp.clear }
+    if (measure.length == curBest) curBestOp += name
+    
+    if (curWorseOp.isEmpty || (measure.length > curWorse)) { curWorse = measure.length ; curWorseOp.clear }
+    if (measure.length == curWorse) curWorseOp += name
+  }
+
+  override def terminate():Unit = {
+    endProof
+    println()
+    val keys = countBest.keySet | countWorse.keySet
+    for (op <- keys)
+      printf("%-16s %4d %6.2f %% %4d %6.2f %%\n", op,
+             countBest.getOrElse(op,0), 100.0 * countBest.getOrElse(op,0).toDouble / n.toDouble,
+             countWorse.getOrElse(op,0), 100.0 * countWorse.getOrElse(op,0).toDouble / n.toDouble )
   }
 }

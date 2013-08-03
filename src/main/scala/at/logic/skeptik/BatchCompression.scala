@@ -81,7 +81,8 @@ class Compiler(val batch: Batch, val defaultProofs: TraversableOnce[String]) {
   val tasks  = MMap[String,Task]()
   val reports= MMap[String,Report](
     "HumanReadable" -> new HumanReadableReport(),
-    "Verify"        -> new VerificationReport()
+    "Verify"        -> new VerificationReport(),
+    "BestWorse"     -> new BestWorseReport()
     )
 
   def compile(): Job = (batch.run map getJob) reduce {_ + _}

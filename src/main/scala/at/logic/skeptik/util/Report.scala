@@ -1,12 +1,17 @@
 package at.logic.skeptik.util.Report
 
 import collection.mutable.{HashMap => MMap, HashSet => MSet}
+import collection.immutable.{Map => IMap}
 
-import at.logic.skeptik.proof.{Proof, Measurements}
+import at.logic.skeptik.proof.Proof
 import at.logic.skeptik.proof.sequent.{SequentProofNode => N}
 import at.logic.skeptik.judgment.Sequent
 
 abstract class Report {
+  type Measurements = IMap[String,Int]
+  val emptyMeasure : Measurements = IMap("length" -> 0, "coreSize" -> 0, "height" -> 0)
+  def addMeasures(a: Measurements, b: Measurements) = IMap((emptyMeasure.keys map { k => (k, a(k) + b(k)) }).toSeq : _*)
+
   def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = ()
   def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = ()
   def terminate():Unit = ()
@@ -14,26 +19,26 @@ abstract class Report {
 
 class HumanReadableReport
 extends Report {
-  var m = Measurements(0,0,0)
+  var m = emptyMeasure
   val cumul = MMap[String, (Measurements, Double, Measurements)]()
 
   override def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
     m = measure
     printf("\n%s\n%-16s %6d ms %7d %6.2f %% %7d %6.2f %% %7d %6.2f %%\n",
-           name, "", timing.toInt, measure.length, 100.0, measure.width, 100.0, measure.height, 100.0)
+           name, "", timing.toInt, measure("length"), 100.0, measure("coreSize"), 100.0, measure("height"), 100.0)
   }
 
   def percent(o: Int, n: Int):Double = (1.0 - (n.toDouble / o.toDouble)) * 100.0
 
   override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
-    val (oldOpM, oldTiming, oldProofM) = cumul.getOrElse(name, (Measurements(0,0,0), 0.0, Measurements(0,0,0)))
-    cumul += (name -> (oldOpM + measure, oldTiming + timing, oldProofM + m))
+    val (oldOpM, oldTiming, oldProofM) = cumul.getOrElse(name, (emptyMeasure, 0.0, emptyMeasure))
+    cumul += (name -> (addMeasures(oldOpM, measure), oldTiming + timing, addMeasures(oldProofM, m)))
     
     printf("%-16s %6d ms %7d %6.2f %% %7d %6.2f %% %7d %6.2f %%\n",
            name, timing.toInt,
-           measure.length, percent(m.length,measure.length),
-           measure.width, percent(m.width,measure.width),
-           measure.height, percent(m.height,measure.height) )
+           measure("length"), percent(m("length"),measure("length")),
+           measure("coreSize"), percent(m("coreSize"),measure("coreSize")),
+           measure("height"), percent(m("height"),measure("height")) )
 
   }
 
@@ -41,10 +46,10 @@ extends Report {
     println()
     for ((name, (op, t, pr)) <- cumul) 
       printf("%-16s %4.1f n/ms %7d %6.2f %% %7d %6.2f %% %7d %6.2f %%\n",
-            name, pr.length/t,
-            op.length, percent(pr.length,op.length),
-            op.width,  percent(pr.width,op.width),
-            op.height, percent(pr.height,op.height) )
+            name, pr("length")/t,
+            op("length"), percent(pr("length"),op("length")),
+            op("coreSize"),  percent(pr("coreSize"),op("coreSize")),
+            op("height"), percent(pr("height"),op("height")) )
   }
 }
 
@@ -92,11 +97,11 @@ extends Report {
   override def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = endProof
 
   override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
-    if (curBestOp.isEmpty || (measure.length < curBest)) { curBest = measure.length ; curBestOp.clear() }
-    if (measure.length == curBest) curBestOp += name
+    if (curBestOp.isEmpty || (measure("length") < curBest)) { curBest = measure("length") ; curBestOp.clear() }
+    if (measure("length") == curBest) curBestOp += name
     
-    if (curWorseOp.isEmpty || (measure.length > curWorse)) { curWorse = measure.length ; curWorseOp.clear() }
-    if (measure.length == curWorse) curWorseOp += name
+    if (curWorseOp.isEmpty || (measure("length") > curWorse)) { curWorse = measure("length") ; curWorseOp.clear() }
+    if (measure("length") == curWorse) curWorseOp += name
   }
 
   override def terminate():Unit = {

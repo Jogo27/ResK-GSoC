@@ -25,7 +25,7 @@ extends Report {
   override def newProof(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = {
     m = measure
     printf("\n%s\n%-16s %6d ms %7d %6.2f %% %7d %6.2f %% %7d %6.2f %%\n",
-           name, "", timing.toInt, measure("length"), 100.0, measure("coreSize"), 100.0, measure("height"), 100.0)
+           name, "", timing.toInt, measure("length"), percent(1,1), measure("coreSize"), percent(1,1), measure("height"), percent(1,1))
   }
 
   def percent(o: Int, n: Int):Double = (1.0 - (n.toDouble / o.toDouble)) * 100.0

@@ -4,7 +4,7 @@ import at.logic.skeptik.proof.Proof
 import at.logic.skeptik.proof.sequent._
 import at.logic.skeptik.proof.sequent.lk._
 
-class MiddleLower[T <: ProofThread[T]] (implicit convert: SequentProofNode => T)
+class MiddleLower[T <: ProofBraid[T]] (implicit convert: SequentProofNode => T)
 extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
 
   def apply(proof: Proof[SequentProofNode]) = {
@@ -21,7 +21,7 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
   }
 }
 
-trait ProofThread[T] {
+trait ProofBraid[T] {
   def resolveWith(other: T, resolution: R):T
   def /(divisor: Int):T //TODO: replace Int by a more generic type
   def finalMerge:Proof[SequentProofNode]

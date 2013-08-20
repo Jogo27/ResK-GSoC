@@ -1,5 +1,16 @@
 package at.logic.skeptik.algorithm.compressor.middleLower
 
+//import at.logic.skeptik.proof.Proof
+import at.logic.skeptik.proof.sequent._
+import at.logic.skeptik.proof.sequent.lk._
+import at.logic.skeptik.expression.E
+
+import spire.algebra._   // provides algebraic type classes
+import spire.math._      // provides functions, types, and type classes
+import spire.implicits._ // provides infix operators, instances and conversions
+
+import collection.immutable.{ HashMap => IMap }
+
 case class SBThread(val subproof: SequentProofNode, val fraction: Rational) {
   def /(divisor: Int) = SBThread(subproof, fraction/divisor)
 }
@@ -12,23 +23,25 @@ case class SimpleBraid(
 
   def resolveWith(other: SimpleBraid, resolution: R):SimpleBraid = (this,other) match {
 
-    // New pending branch
-    case (SimpleBraid(Some(mtl @ SBThread(_, fl)), pl, ml), _) if (fl < 1)=>
-      SimpleBraid(None, pl + (Left(resolution.pivot) -> mtl), ml).resolveWith(other, resolution)
-    case (_, SimpleBraid(Some(mtr @ SBThread(_, fr)), pr, mr)) if (fr < 1)=>
-      resolveWith(SimpleBraid(None, pr + (Right(resolution.pivot) -> mtr), mr), resolution)
-
     // Less than 2 main thread
+    // TODO
 
-
+    // 
+    case _ => throw new Exception("Unhandled situation")
   }
   
-  def /(divisor: Int) =
-    new SimpleBraid(
-      main    map       {_ / divisor},
-      pending mapValues {_ / divisor},
-      merged  map       {_ / divisor}
-    )
+  def divise(divisor: Int, pivot: Either[E,E]) = 
+    if (divisor == 1) this else {
+      val pendingDivided = pending mapValues {_ / divisor}
+      new SimpleBraid(
+        None,
+        main match {
+          case None => pendingDivided
+          case Some(thread) => pendingDivided + (pivot -> (thread / divisor))
+        },
+        merged map {_ / divisor}
+      )
+    }
 
   def finalMerge = main match {
     case Some(SBThread(subproof,Rational.one)) => subproof
@@ -37,5 +50,5 @@ case class SimpleBraid(
 }
 
 object r {
-  implicit def convert(node: SequentProofNode) = SimpleBraid(Some(SBThread(node, Rational.one)), IMap(), Seq())
+  implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(SBThread(node, Rational.one)), IMap(), Seq())
 }

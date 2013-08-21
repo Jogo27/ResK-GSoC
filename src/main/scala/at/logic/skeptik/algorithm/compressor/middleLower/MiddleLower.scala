@@ -11,7 +11,7 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
   def apply(proof: Proof[SequentProofNode]) = {
 
     def compute(node: SequentProofNode, premises: Seq[T]):T =
-      ( (node, premises) match {
+      ( (node, premises.toList) match {
           case (resolution:R, left::right::Nil) =>
             val R(nodeLeft, nodeRight, pivot, _) = resolution
 //            println("\ncompute "+resolution.conclusion+" = ("+nodeLeft.conclusion+") @ ("+nodeRight.conclusion+")")
@@ -33,8 +33,13 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
             )
             newLeft.resolveWith(newRight, resolution)
 
-          case (_, Nil) => initBraid(node)
-          case _ => throw new Exception("Unhandled inference")
+          // Ugly catchall
+          // TODO: change architecture in order to handle non-resolution inferences
+          case _ => initBraid(node)
+
+          // Old crap
+//          case (_, Nil) => initBraid(node)
+//          case _ => throw new Exception("Unhandled inference "+node.getClass()+" "+premises.size)
         }
       )
 

@@ -1,6 +1,7 @@
 package at.logic.skeptik.algorithm
 
 import at.logic.skeptik.algorithm.compressor.split._
+import at.logic.skeptik.algorithm.compressor.middleLower._
 
 // Algorithm names should contain only alphanumeric characters
 
@@ -35,6 +36,7 @@ package object compressor {
     "RRCROT" -> RRC1POTBasedRandomA2,
     "RRlmROT" -> RRWithLowerMiddleOTBasedRandomA2,
     "RRHROT" -> RRWithHelsinkiOTBasedRandomA2,
+    "SimpleML" -> SimpleMiddleLower,
     "Split" -> new CottonSplit(30000),
     "RBSplit" -> new RandomBoudouSplit(30000),
     "DBSplit" -> new DeterministicBoudouSplit(30000),

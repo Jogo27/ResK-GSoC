@@ -52,3 +52,6 @@ case class SimpleBraid(
 object r {
   implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(SBThread(node, Rational.one)), IMap(), Seq())
 }
+import r._
+
+object SimpleMiddleLower extends MiddleLower[SimpleBraid]

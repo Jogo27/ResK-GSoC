@@ -14,18 +14,19 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
       ( (node, premises) match {
           case (resolution:R, left::right::Nil) =>
             val R(nodeLeft, nodeRight, pivot, _) = resolution
+//            println("\ncompute "+resolution.conclusion+" = ("+nodeLeft.conclusion+") @ ("+nodeRight.conclusion+")")
             // Dividing the braid now is very inefficient, but easy to implement.
             // TODO: use a Map[(SequentProofNode, pivot:E)] instead of foldDown's implicit map.
             val newLeft = left.divise(
               proof.childrenOf(nodeLeft) count {
-                case R(n,_,p,_) if (node eq nodeLeft) && (p == pivot) => true
-                case _ => false
+                case R(n,_,p,_) if (n eq nodeLeft) && (p == pivot) => true
+                case n => false
               },
               Left(pivot)
             )
             val newRight = right.divise(
               proof.childrenOf(nodeRight) count {
-                case R(_,n,p,_) if (node eq nodeRight) && (p == pivot) => true
+                case R(_,n,p,_) if (n eq nodeRight) && (p == pivot) => true
                 case _ => false
               },
               Right(pivot)

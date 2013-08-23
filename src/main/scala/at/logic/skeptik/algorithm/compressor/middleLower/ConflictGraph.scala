@@ -1,47 +1,75 @@
 package at.logic.skeptik.algorithm.compressor.middleLower
 
-trait OrderedSubproof {
-  def subproof: SequentProofNode
-  def <(other: SequentProofNode): Boolean
+import at.logic.skeptik.util.UnionFind
+
+import collection.mutable.{HashMap => MMap, HashSet => MSet}
+
+trait VertexAndOutgoingEdges[V] {
+  def vertex: V
+  def edgeTo(other: V): Boolean
 }
 
-class ConflictGraph[P, T <: OrderedSubproof[P]] {
-  protected val matrix = MMap[T,MSet[SequentProofNode]]()
+class ConflictGraph[V, T <: VertexAndOutgoingEdges[V]] {
+  protected val matrix = MMap[T,MSet[V]]()
 
   def +=(elt: T) =
     if (matrix contains elt) ()
     else {
-      val sup = MSet[SequentProofNode]()
+      val sup = MSet[V]()
       for (other <- matrix.keys) {
-        if      (elt < other.subproof)           sup += other.subproof
-        else if (other < elt.subproof) matrix(other) += elt.subproof
+        if      (elt   edgeTo other.vertex)         sup += other.vertex
+        else if (other edgeTo elt.vertex) matrix(other) += elt.vertex
       }
       matrix(elt) = sup
     }
 
-  def resolve(mainproof: SequentProofNode) = {
+  def reverseOrder(from: V):Iterator[T] = {
     val map = matrix.clone
-    for (other <- map.keys) if (other < mainproof) map(other) += mainproof
-    val uf = new UnionFind[SequentProofNode]()
-    var ret = mainproof
-    var curproof = mainproof
+    for (other <- map.keys) if (other edgeTo from) map(other) += from
+    new ReverseOrderIterator(map, from)
+  }
 
-    while (! map.isEmpty)
-      map find { kv =>
-        val (key, set) = kv
-        val nset = set.map(uf.find)
-        if ((nset.size == 1) && nset(curproof)) {
-          ret = R(ret, key.subproof)
-          curproof = uf.union(curproof, key.subproof)
-          map -= key
-          true
+  class ReverseOrderIterator(val matrix: MMap[T,MSet[V]], from: V) extends Iterator[T] {
+    val uf = new UnionFind[V]()
+    var cur = from
+    var nextBuffer: Option[T] = None
+    var cont = true
+
+    def hasNext = nextBuffer match {
+      case Some(_) => true
+      case None => cont && (! matrix.isEmpty) && {
+        val n = matrix find { kv =>
+          val (key, set) = kv
+          val nset = set.map(uf.find)
+          if ((nset.size == 1) && nset(cur)) {
+            cur = uf.union(cur, key.vertex)
+            matrix -= key
+            true
+          }
+          else {
+            matrix(key) = nset
+            false
+          }
         }
-        else {
-          map(key) = nset
-          false
+        n match {
+          case Some((v,_)) =>
+            nextBuffer = Some(v)
+            true
+          case None =>
+            println(matrix)
+            cont = false
+            false
         }
       }
-    ret
+    }
+
+    def next() =
+      if (hasNext) {
+        val ret = nextBuffer.get
+        nextBuffer = None
+        ret
+      }
+      else throw new NoSuchElementException()
   }
 
 }

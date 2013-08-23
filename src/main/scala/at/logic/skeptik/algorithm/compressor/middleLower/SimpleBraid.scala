@@ -34,49 +34,48 @@ case class SimpleBraid(
     // Too simple cases
     case ((1,0,0), (1,0,0)) => initBraid(R(main.get, other.main.get, resolution.auxL))
 
-    case ((1,_,0), (1,0,0)) =>
-      val threadLeft = (this /: pending) { (acc, kv) =>
-        val (key @ (subproof, pivot), _) = kv
-        if (pivot == Right(resolution.auxL)) throw new NotImplementedError()
-        else if (subproof.conclusion.suc contains resolution.auxL) acc.merge(key)
-        else acc
-      }
-      SimpleBraid(Some(R(threadLeft.main.get, other.main.get, resolution.auxL)), threadLeft.pending, threadLeft.merged)
-
     case ((1,0,_), (1,0,_)) =>
       SimpleBraid(Some(R(main.get, other.main.get, resolution.auxL)), pending, mergeMerged(merged, other.merged))
 
+    // Regularisation cases
+    case ((1,_,_), (1,_,_)) if (hasPending(Right(resolution.auxL))) =>
+      SimpleBraid(main, pending, mergeMerged(merged, mergeMerged(other.pending, other.merged)))
+    case ((1,_,_), (1,_,_)) if (other.hasPending(Left(resolution.auxL))) =>
+      SimpleBraid(other.main, other.pending, mergeMerged(other.merged, mergeMerged(pending, merged)))
+
     // Main case
     case ((1,_,_), (1,_,_)) =>
-      // Step 1: Merge for the resolution
-      val s1threadLeft = (this /: pending) { (acc, kv) =>
-        val (key @ (subproof, pivot), _) = kv
-        if (pivot == Right(resolution.auxL)) throw new NotImplementedError()
-        else if (subproof.conclusion.suc contains resolution.auxL) acc.merge(key)
-        else acc
-      }
-      val s1threadRight = (other /: other.pending) { (acc, kv) =>
-        val (key @ (subproof, pivot), _) = kv
-        if (pivot == Left(resolution.auxL)) throw new NotImplementedError()
-        else if (subproof.conclusion.ant contains resolution.auxL) acc.merge(key)
-        else acc
-      }
+      /* Recipe :
+       * 1) Merge for the resolution
+       * 2) Merge if the other branch has already merge
+       * 3) Resolution
+       * 4) Merge pending
+       * 5) Merge merged
+       */
 
-      // Step 2: Merge if the other branch has already merge
-      val s2threadLeft = (s1threadLeft /: s1threadRight.merged) { (acc, kv) =>
-        val (key, _) = kv
-        if (acc.pending contains key) acc.merge(key)
-        else acc
-      }
-      val s2threadRight = (s1threadRight /: s1threadLeft.merged) { (acc, kv) =>
-        val (key, _) = kv
-        if (acc.pending contains key) acc.merge(key)
-        else acc
-      }
+      // Step 1 & 2
+      import s._
+      val mergeLeft  = new ConflictGraph[SequentProofNode,SBThreadAsVertex]()
+      val mergeRight = new ConflictGraph[SequentProofNode,SBThreadAsVertex]()
+      for (key @ (subproof, pivot) <- pending.keys)
+        if (subproof.conclusion.suc contains resolution.auxL) {
+          mergeLeft += key
+          if (other.pending contains key) mergeRight += key // This case should be very rare, but may be optimized
+        }
+        else if (other.merged contains key) mergeLeft += key
+      for (key @ (subproof, pivot) <- other.pending.keys)
+        if (subproof.conclusion.ant contains resolution.auxL) {
+          mergeRight += key
+          if (pending contains key) mergeLeft += key // This case should be very rare, but may be optimized
+        }
+        else if (merged contains key) mergeRight += key
+      val threadLeft  = (this  /:  mergeLeft.reverseOrder(main.get))       { _ merge _ }
+      val threadRight = (other /: mergeRight.reverseOrder(other.main.get)) { _ merge _ }
+
       // Step 3: Resolution
-      val s3subproof = R(s2threadLeft.main.get, s2threadRight.main.get, resolution.auxL)
+      val s3subproof = R(threadLeft.main.get, threadRight.main.get, resolution.auxL)
       // Step 4: Merge pending
-      val (s4subproof, s4pending) = ((s3subproof, s2threadLeft.pending) /: s2threadRight.pending) { (acc, kv) =>
+      val (s4subproof, s4pending) = ((s3subproof, threadLeft.pending) /: threadRight.pending) { (acc, kv) =>
         val (mainproof, p) = acc
         val (key @ (subproof, pivot), fraction) = kv
         val nfrac = p.getOrElse(key,Rational.zero) + fraction
@@ -87,7 +86,7 @@ case class SimpleBraid(
         }
       }
       // Step 5: Merge merged
-      val s5merge = mergeMerged(s2threadLeft.merged, s2threadRight.merged)
+      val s5merge = mergeMerged(threadLeft.merged, threadRight.merged)
 
       SimpleBraid(Some(s4subproof), s4pending, s5merge)
 
@@ -139,6 +138,11 @@ case class SimpleBraid(
       SimpleBraid(main, pending + (thread -> fraction), merged)
   }
 
+  def hasPending(pivot: Either[E,E]) = pending exists { kv =>
+    val ((_,other),_) = kv
+    other == pivot
+  }
+
   def merge(thread: SBThread) = {
     val (subproof, pivot) = thread
     val fraction = pending(thread)
@@ -163,6 +167,21 @@ case class SimpleBraid(
     }
 
   def sizes = (main.size, pending.size, merged.size)
+
+  object s {
+    import language.implicitConversions
+    implicit def sbthread2vertex(t: SBThread):SBThreadAsVertex = new SBThreadAsVertex(t)
+    implicit def vertex2sbthread(v: SBThreadAsVertex):SBThread = v.t
+    class SBThreadAsVertex(val t: SBThread) extends VertexAndOutgoingEdges[SequentProofNode] {
+      def vertex = t._1
+      def edgeTo(to: SequentProofNode) = t._2 match {
+        case Left(l)  => to.conclusion.ant contains l
+        case Right(l) => to.conclusion.suc contains l
+      }
+      override def toString():String = (t._1.conclusion, t._2).toString
+    }
+  }
+
 }
 
 object SimpleMiddleLower extends MiddleLower[SimpleBraid]

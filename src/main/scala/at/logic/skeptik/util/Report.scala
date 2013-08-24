@@ -65,7 +65,7 @@ extends Report {
 
   override def newOp(name: String, proof: Proof[N], timing: Double, measure: Measurements):Unit = conclusion match {
     case Some(c) if proof.root.conclusion subsequentOf c => ()
-    case _ => println(name+": error on "+proofname+", expected "+conclusion+" got "+proof.root.conclusion)
+    case _ => println(name+": error on "+proofname+", expected "+conclusion.get+" got "+proof.root.conclusion)
   }
 }
 

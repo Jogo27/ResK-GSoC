@@ -23,6 +23,8 @@ class ConflictGraph[V, T <: VertexAndOutgoingEdges[V]] {
       matrix(elt) = sup
     }
 
+  def contains(elt: T) = matrix contains elt
+
   def reverseOrder(from: V):Iterator[T] = {
     val map = matrix.clone
     for (other <- map.keys) if (other edgeTo from) map(other) += from

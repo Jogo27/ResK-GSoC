@@ -58,7 +58,7 @@ class ConflictGraph[V, T <: VertexAndOutgoingEdges[V]] {
             nextBuffer = Some(v)
             true
           case None =>
-            println(matrix)
+//            println(matrix)
             cont = false
             false
         }

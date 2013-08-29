@@ -13,8 +13,16 @@ import collection.immutable.{ HashMap => IMap }
 import annotation.tailrec
 
 object r {
-  type SBThread = (SequentProofNode, Either[E,E])
   implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(node), IMap(), IMap())
+
+  private[middleLower] abstract sealed class GraphVertex(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[GraphVertex]
+  private[middleLower] final case class SBThread(sp: SequentProofNode, val pivot: Either[E,E]) extends GraphVertex(sp) {
+    def edgeTo(other: GraphVertex) = pivot match {
+      case Left(l)  => other.subproof.conclusion.ant contains l
+      case Right(l) => other.subproof.conclusion.suc contains l
+    }
+  }
+  private[middleLower] final case class SBMain(sp: SequentProofNode) extends GraphVertex(sp) with LeafWithoutOutgoingEdges[GraphVertex]
 }
 import r._
 
@@ -55,13 +63,13 @@ case class SimpleBraid(
     case ((1,_,_), (1,_,_)) if !(main.get.conclusion.suc contains resolution.auxL) && (other.main.get.conclusion.ant contains resolution.auxL) =>
       SimpleBraid(
         main,
-        mergeMap(pending + ((other.main.get, Right(resolution.auxL)) -> Rational.one), other.pending),
+        mergeMap(pending + (SBThread(other.main.get, Right(resolution.auxL)) -> Rational.one), other.pending),
         merged
       ).mergeMerged(other.merged).mergeCompletePending()
     case ((1,_,_), (1,_,_)) if (main.get.conclusion.suc contains resolution.auxL) && !(other.main.get.conclusion.ant contains resolution.auxL) =>
       SimpleBraid(
         other.main,
-        mergeMap(other.pending + ((main.get, Left(resolution.auxL)) -> Rational.one), pending),
+        mergeMap(other.pending + (SBThread(main.get, Left(resolution.auxL)) -> Rational.one), pending),
         other.merged
       ).mergeMerged(merged).mergeCompletePending()
 
@@ -79,8 +87,8 @@ case class SimpleBraid(
       // Step 1
       val mergeLeft  = conflictGraph(Right(resolution.auxL))
       val mergeRight = conflictGraph(Left(resolution.auxL))
-      val threadLeft  = (this  /:  mergeLeft.reverseOrder(main.get))       { _ merge _ }
-      val threadRight = (other /: mergeRight.reverseOrder(other.main.get)) { _ merge _ }
+      val threadLeft  = (this  /:  mergeLeft.reverseOrder(SBMain(main.get)))       { _ merge _ }
+      val threadRight = (other /: mergeRight.reverseOrder(SBMain(other.main.get))) { _ merge _ }
 
       // Step 3 and 4
       val s4braid =
@@ -105,7 +113,7 @@ case class SimpleBraid(
         None,
         main match {
           case None => pendingDivided
-          case Some(subproof) => pendingDivided + ((subproof,pivot) -> (Rational.one / divisor))
+          case Some(subproof) => pendingDivided + (SBThread(subproof,pivot) -> (Rational.one / divisor))
         },
         merged mapValues {_ / divisor}
       )
@@ -120,19 +128,20 @@ case class SimpleBraid(
   // Utils functions
 
   def hasPending(pivot: Either[E,E]) = pending exists { kv =>
-    val ((_,other),_) = kv
+    val (SBThread(_,other),_) = kv
     other == pivot
   }
 
-  def merge(thread: SBThread) = {
-    val (subproof, pivot) = thread
-    val fraction = pending(thread)
-    val nMerged = if (fraction < Rational.one) merged + (thread -> fraction) else merged
-    (main, pivot) match {
-      case (None, _)           => SimpleBraid(Some(subproof),          pending - thread, nMerged)
-      case (Some(s), Left(p))  => SimpleBraid(Some(R(subproof, s, p)), pending - thread, nMerged)
-      case (Some(s), Right(p)) => SimpleBraid(Some(R(s, subproof, p)), pending - thread, nMerged)
-    }
+  def merge(v: GraphVertex) = v match {
+    case thread @ SBThread(subproof, pivot) =>
+      val fraction = pending(thread)
+      val nMerged = if (fraction < Rational.one) merged + (thread -> fraction) else merged
+      (main, pivot) match {
+        case (None, _)           => SimpleBraid(Some(subproof),          pending - thread, nMerged)
+        case (Some(s), Left(p))  => SimpleBraid(Some(R(subproof, s, p)), pending - thread, nMerged)
+        case (Some(s), Right(p)) => SimpleBraid(Some(R(s, subproof, p)), pending - thread, nMerged)
+      }
+    case _ => throw new Exception("Unable to merge non-thread")
   }
 
   def mergeMap(a: Map[SBThread, Rational], b: Map[SBThread, Rational]) =
@@ -164,24 +173,9 @@ case class SimpleBraid(
 
   def sizes = (main.size, pending.size, merged.size)
 
-  object s {
-    import language.implicitConversions
-    implicit def sbthread2vertex(t: SBThread):SBThreadAsVertex = new SBThreadAsVertex(t)
-    implicit def vertex2sbthread(v: SBThreadAsVertex):SBThread = v.t
-    class SBThreadAsVertex(val t: SBThread) extends VertexAndOutgoingEdges[SequentProofNode] {
-      def vertex = t._1
-      def edgeTo(to: SequentProofNode) = t._2 match {
-        case Left(l)  => to.conclusion.ant contains l
-        case Right(l) => to.conclusion.suc contains l
-      }
-      override def toString():String = (t._1.conclusion, t._2).toString
-    }
-  }
-
   def conflictGraph(pivot: Either[E,E]) = {
-      import s._
 //      println("conflictGraph")
-      val graph  = new ConflictGraph[SequentProofNode,SBThreadAsVertex]()
+      val graph  = new ConflictGraph[GraphVertex]()
 
       @tailrec
       def collectPending(pivots: Seq[Either[E,E]], parg: Map[SBThread,Rational]):Unit = {
@@ -189,7 +183,7 @@ case class SimpleBraid(
 //        println(pivots)
         var nPivots = List[Either[E,E]]()
 
-        for (key @ (subproof, pivot) <- p.keys)
+        for (key @ SBThread(subproof, pivot) <- p.keys)
           pivots foreach { _ match {
               case Left(l)  if (subproof.conclusion.ant contains l) =>
 //                println("Add "+subproof.conclusion+" "+pivot)
@@ -213,12 +207,11 @@ case class SimpleBraid(
   }
 
   def mergeCompletePending() = {
-    import s._
 //    println("\n mergeCompletePending")
-    val graph = new ConflictGraph[SequentProofNode,SBThreadAsVertex]()
+    val graph = new ConflictGraph[GraphVertex]()
     for ((key, fraction) <- pending)
       if (fraction >= Rational.one) graph += key
-    (this /: graph.reverseOrder(main.get)) { _ merge _ }
+    (this /: graph.reverseOrder(SBMain(main.get))) { _ merge _ }
   }
 
 }

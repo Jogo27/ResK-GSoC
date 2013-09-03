@@ -38,18 +38,18 @@ case class SimpleBraid(
 
     // Less than 2 main threads
     case ((0,_,0), (0,_,0)) =>
-      SimpleBraid(None, mergeMap(pending, other.pending), IMap())
-    case ((0,_,0), _) => // (other /: pending)       { _ addPending _ }
-      SimpleBraid(other.main, mergeMap(pending, other.pending), IMap()).mergeMerged(other.merged).mergeCompletePending()
-    case (_, (0,_,0)) => // (this  /: other.pending) { _ addPending _ }
-      SimpleBraid(main, mergeMap(pending, other.pending), IMap()).mergeMerged(merged).mergeCompletePending()
+      mergePending(other.pending)
+    case (_, (0,_,0)) =>
+      mergePending(other.pending).mergeCompletePending()
+    case ((0,_,0), _) =>
+      other.mergePending(pending).mergeCompletePending()
 
     // Too simple cases
     case ((1,0,0), (1,0,0)) =>
       initBraid(R(main.get, other.main.get, resolution.auxL))
 
     case ((1,0,_), (1,0,_)) =>
-      SimpleBraid(Some(R(main.get, other.main.get, resolution.auxL)), pending, merged).mergeMerged(other.merged).mergeCompletePending()
+      resolve(other.main.get, resolution.auxL).mergeMerged(other.merged).mergeCompletePending()
 
     // Regularisation cases
     case ((1,_,_), (1,_,_)) if (hasPending(Right(resolution.auxL))) =>
@@ -61,17 +61,9 @@ case class SimpleBraid(
 
     // Delay cases
     case ((1,_,_), (1,_,_)) if !(main.get.conclusion.suc contains resolution.auxL) && (other.main.get.conclusion.ant contains resolution.auxL) =>
-      SimpleBraid(
-        main,
-        mergeMap(pending + (SBThread(other.main.get, Right(resolution.auxL)) -> Rational.one), other.pending),
-        merged
-      ).mergeMerged(other.merged).mergeCompletePending()
+      mergePending(other.pending + (SBThread(other.main.get, Right(resolution.auxL)) -> Rational.one)).mergeMerged(other.merged).mergeCompletePending()
     case ((1,_,_), (1,_,_)) if (main.get.conclusion.suc contains resolution.auxL) && !(other.main.get.conclusion.ant contains resolution.auxL) =>
-      SimpleBraid(
-        other.main,
-        mergeMap(other.pending + (SBThread(main.get, Left(resolution.auxL)) -> Rational.one), pending),
-        other.merged
-      ).mergeMerged(merged).mergeCompletePending()
+      other.mergePending(pending + (SBThread(main.get, Right(resolution.auxL)) -> Rational.one)).mergeMerged(merged).mergeCompletePending()
 
 
     // Main case
@@ -90,16 +82,8 @@ case class SimpleBraid(
       val threadLeft  = (this  /:  mergeLeft.reverseOrder(SBMain(main.get)))       { _ merge _ }
       val threadRight = (other /: mergeRight.reverseOrder(SBMain(other.main.get))) { _ merge _ }
 
-      // Step 3 and 4
-      val s4braid =
-        SimpleBraid(
-          Some(R(threadLeft.main.get, threadRight.main.get, resolution.auxL)),
-          mergeMap(threadLeft.pending, threadRight.pending),
-          IMap()
-        ).mergeMerged(threadLeft.merged).mergeMerged(threadRight.merged)
-
-      // Step 5
-      s4braid.mergeCompletePending()
+      // Step 3, 4 and 5
+      threadLeft.resolve(threadRight.main.get, resolution.auxL).mergePending(threadRight.pending).mergeMerged(threadRight.merged).mergeCompletePending()
 
 
     // Catch all
@@ -109,7 +93,7 @@ case class SimpleBraid(
   def divise(divisor: Int, pivot: Either[E,E]) = 
     if (divisor == 1) this else {
       val pendingDivided = pending mapValues {_ / divisor}
-      new SimpleBraid(
+      SimpleBraid(
         None,
         main match {
           case None => pendingDivided
@@ -126,6 +110,11 @@ case class SimpleBraid(
 
 
   // Utils functions
+
+  // main methods
+
+  def resolve(subproof: SequentProofNode, pivot: E) = 
+    SimpleBraid(Some(R(main.get, subproof, pivot)), pending, merged)
 
   // pending methods
 
@@ -155,6 +144,18 @@ case class SimpleBraid(
       }
       else acc + (thread -> fraction)
     }
+
+  def mergePending(m: Map[SBThread, Rational]) = (this /: m) { (acc,kv) =>
+    val (key, fraction) = kv
+    if (acc.merged contains key) {
+      val nfrac = fraction + acc.merged(key)
+      SimpleBraid(acc.main, acc.pending + (key -> nfrac), acc.merged - key)
+    }
+    else {
+      val nfrac = fraction + acc.pending.getOrElse(key, Rational.zero)
+      SimpleBraid(acc.main, acc.pending + (key -> nfrac), acc.merged)
+    }
+  }
 
   // merged methods
 

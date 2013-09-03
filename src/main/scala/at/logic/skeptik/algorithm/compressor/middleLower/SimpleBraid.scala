@@ -127,6 +127,8 @@ case class SimpleBraid(
 
   // Utils functions
 
+  // pending methods
+
   def hasPending(pivot: Either[E,E]) = pending exists { kv =>
     val (SBThread(_,other),_) = kv
     other == pivot
@@ -154,6 +156,8 @@ case class SimpleBraid(
       else acc + (thread -> fraction)
     }
 
+  // merged methods
+
   def mergeMerged(m: Map[SBThread, Rational]) = (this /: m) { (acc,kv) =>
     val (key, fraction) = kv
     if (acc.pending contains key) {
@@ -170,6 +174,8 @@ case class SimpleBraid(
     else
       SimpleBraid(acc.main, acc.pending, acc.merged + (key -> fraction))
   }
+
+  // Miscellaneous (TODO: tidy it up)
 
   def sizes = (main.size, pending.size, merged.size)
 

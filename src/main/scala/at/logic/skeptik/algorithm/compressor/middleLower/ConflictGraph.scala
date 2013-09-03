@@ -2,7 +2,9 @@ package at.logic.skeptik.algorithm.compressor.middleLower
 
 import at.logic.skeptik.util.UnionFind
 
+import collection.immutable.{HashSet => ISet}
 import collection.mutable.{HashMap => MMap, HashSet => MSet}
+import annotation.tailrec
 
 trait VertexAndOutgoingEdges[V] {
   def edgeTo(other: V): Boolean
@@ -27,40 +29,63 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]] {
 
   def contains(elt: T) = matrix contains elt
 
-//  def getInOut(elt: T) = {
-//    val in = MSet[T]()
-//    val out = MSet[T]()
-//    for (other <- matrix.keys) {
-//      if      (elt   edgeTo other.vertex) out += other
-//      else if (other edgeTo elt.vertex)    in += elt
-//    }
-//    (in, out)
-//  }
-//    
-//  /** Find cycles a new element would introduce in the graph.
-//   * The new element is not added to the graph.
-//   *
-//   * @param elt the new element
-//   * @param in  the set of elements which would have edge to `elt`
-//   * @param out the set of vertice which would have edge from `elt`
-//   * @return a subset of `out` where each element is the start of a cycle
-//   */
-//  def getCycleBases(elt: T, in: Set[T], out: Set[T]):Set[T] = {
-//    val target = in + elt
-//    out filter { e =>
-//      @tailrec
-//      def search(from: Set[T], visited: Set[T]):Boolean =
-//        if (from.isEmpty) false
-//        else {
-//          val e = from.head
-//          if (visited contains e) search(from - e, visited)
-//          else if (target contains e) true
-//          else search((from - e) ++ matrix(e), visited + e)
-//        }
-//      search(ISet(e),ISet())
-//    }
-//  }     
+  def getInOut(elt: T) = {
+    val in = MSet[T]()
+    val out = MSet[T]()
+    for (other <- matrix.keys) {
+      if      (elt   edgeTo other) out += other
+      else if (other edgeTo elt)    in += elt
+    }
+    (in, out)
+  }
     
+  /** Find cycles a new element would introduce in the graph.
+   * The new element is not added to the graph.
+   *
+   * @param elt the new element
+   * @param in  the set of elements which would have edge to `elt`
+   * @param out the set of vertice which would have edge from `elt`
+   * @return a subset of `out` where each element is the start of a cycle
+   */
+  def getCycleBases(elt: T, in: Set[T], out: Set[T]):Set[T] = {
+    val target = in + elt
+    out filter { e =>
+      @tailrec
+      def search(from: Set[T], visited: Set[T]):Boolean =
+        if (from.isEmpty) false
+        else {
+          val e = from.head
+          if (visited contains e) search(from - e, visited)
+          else if (target contains e) true
+          else search((from - e) ++ matrix(e), visited + e)
+        }
+      search(ISet(e),ISet())
+    }
+  }     
+    
+  def subgraph(vertice: Set[T]) = {
+    val ret = new ConflictGraph[T]()
+    for (vertex <- vertice) { ret.matrix(vertex) = matrix(vertex) & vertice }
+    ret
+  }
+
+  /** The subgraph such that if a ∈ subgraph and a → b in the graph, then b ∈ subgraph.
+   */
+  def transitiveSubgraph(baseVertice: Set[T]) = {
+    val ret = new ConflictGraph[T]()
+
+    @tailrec
+    def addVertex(remain: Set[T]):Unit = 
+      if (remain.isEmpty) ()
+      else {
+        val vertex = remain.head
+        ret.matrix(vertex) = matrix(vertex)
+        addVertex((remain | matrix(vertex)) &~ ret.matrix.keySet)
+      }
+
+    addVertex(baseVertice)
+    ret
+  }
 
   def reverseOrder(from: T):Iterator[T] = {
     val map = matrix.clone

@@ -92,15 +92,13 @@ case class SimpleBraid(
   def divise(divisor: Int, pivot: Either[E,E]) = 
     if (divisor == 1) this else {
       val pendingDivided = pending mapValues {_ / divisor}
-      SimpleBraid(
-        None,
-        pGraph,
-        main match {
-          case None => pendingDivided
-          case Some(subproof) => pendingDivided + (SBThread(subproof,pivot) -> (Rational.one / divisor))
-        },
-        merged mapValues {_ / divisor}
-      )
+      val mergedDivided = merged mapValues {_ / divisor}
+      main match {
+        case None => SimpleBraid(None, pGraph, pendingDivided, mergedDivided)
+        case Some(subproof) =>
+          val nThread = SBThread(subproof,pivot)
+          SimpleBraid(None, pGraph + nThread, pendingDivided + (nThread -> (Rational.one / divisor)), mergedDivided)
+      }
     }
 
   def finalMerge = main match {
@@ -131,6 +129,7 @@ case class SimpleBraid(
 
   def merge(v: GraphVertex) = v match {
     case thread @ SBThread(subproof, pivot) =>
+//      println("Merging "+subproof.conclusion+" into "+(main map {_.conclusion}).toString()+" on "+pivot)
       val fraction = pending(thread)
       val nMerged = if (fraction < Rational.one) merged + (thread -> fraction) else merged
       (main, pivot) match {
@@ -156,11 +155,14 @@ case class SimpleBraid(
   }
 
   def mergeCompletePending() = {
-//    println("\n mergeCompletePending")
+//    println("mergeCompletePending")
+//    pGraph.aff()
     val subgraph = pGraph.subgraph( {
       case key: SBThread => pending(key) >= Rational.one
-      case _ => false
+      case x => false
     } )
+//    println("filtered ("+subgraph.size+"):")
+//    subgraph.aff()
     (this /: subgraph.reverseOrder(SBMain(main.get))) { _ merge _ }
   }
 
@@ -186,6 +188,13 @@ case class SimpleBraid(
   // Miscellaneous
 
   def sizes = (main.size, pending.size, merged.size)
+
+  override def toString() =
+    "(" +
+    (main map { _.conclusion }).toString() + "," +
+    pGraph.size + "," +
+    (pending.keys map { _.pivot }).toString() + "," +
+    (merged.keys map { _.pivot }).toString() + ")"
 
 }
 

@@ -20,24 +20,32 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
   def +(elt: T) = {
     // This implementation is slow because the matrix is traversed twice.
     // TODO: Faster implementation.
+//    println("before +")
+//    aff()
     val (in,out) = getInOut(elt)
-    new ConflictGraph[T]((IMap(elt -> out) /: matrix) { (acc,kv) =>
+//    println("+ "+elt+" in "+in+" out "+out)
+    val r = new ConflictGraph[T]((IMap(elt -> out) /: matrix) { (acc,kv) =>
       val (key, vOut) = kv
       if (in contains key)
         acc + (key -> (vOut + elt))
       else
         acc + kv
     })
+//    println("after +")
+//    r.aff()
+    r
   }
 
   def -(elt: T) = new ConflictGraph[T]((matrix - elt) mapValues { _ - elt })
 
   def contains(elt: T) = matrix contains elt
 
+  def size = matrix.size
+
   def getInOut(elt: T) =
     ((ISet[T](), ISet[T]()) /: matrix.keys) { (acc,other) =>
       val (in,out) = acc
-      ( if (other edgeTo elt)   in  + elt   else in,
+      ( if (other edgeTo elt)   in  + other else in,
         if (elt   edgeTo other) out + other else out )
     }
     
@@ -94,7 +102,8 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
     if (matrix contains from)
       throw new NotImplementedError()
     else
-      for (other <- map.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
+      for (other <- matrix.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
+//    println(map)
     new ReverseOrderIterator(map, from)
   }
 
@@ -140,6 +149,16 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
       }
       else throw new NoSuchElementException()
   }
+
+  def edges =
+    (List[(T,T)]() /: matrix) { (acc,kv) =>
+      val (from,vOut) = kv
+      (acc /: vOut) { (acc,to) => (from,to)::acc }
+    }
+
+  def aff() =
+    for ((from,to) <- edges) println(from+" -> "+to)
+      
 
 }
 

@@ -14,7 +14,6 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
       ( (node, premises.toList) match {
           case (resolution:R, left::right::Nil) =>
             val R(nodeLeft, nodeRight, pivot, _) = resolution
-//            println("\ncompute "+resolution.conclusion+" = ("+nodeLeft.conclusion+") @ ("+nodeRight.conclusion+")")
             // Dividing the braid now is very inefficient, but easy to implement.
             // TODO: use a Map[(SequentProofNode, pivot:E)] instead of foldDown's implicit map.
             val newLeft = left.divise(
@@ -31,7 +30,10 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
               },
               Right(pivot)
             )
-            newLeft.resolveWith(newRight, resolution)
+//            println("\nResolve "+newLeft+" with "+newRight+" on "+resolution.auxL)
+            val r = newLeft.resolveWith(newRight, resolution)
+//            println("Resolve result: "+r)
+            r
 
           // Ugly catchall
           // TODO: change architecture in order to handle non-resolution inferences

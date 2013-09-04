@@ -13,7 +13,7 @@ import collection.immutable.{ HashMap => IMap }
 import annotation.tailrec
 
 object r {
-  implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(node), IMap(), IMap())
+  implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(node), ConflictGraph[GraphVertex](), IMap(), IMap())
 
   private[middleLower] abstract sealed class GraphVertex(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[GraphVertex]
   private[middleLower] final case class SBThread(sp: SequentProofNode, val pivot: Either[E,E]) extends GraphVertex(sp) {
@@ -28,6 +28,7 @@ import r._
 
 case class SimpleBraid(
   val main:    Option[SequentProofNode],
+  val pGraph:  ConflictGraph[GraphVertex],
   val pending: Map[SBThread, Rational],
   val merged:  Map[SBThread, Rational]
 ) extends ProofBraid[SimpleBraid] {
@@ -77,10 +78,8 @@ case class SimpleBraid(
        */
 
       // Step 1
-      val mergeLeft  = conflictGraph(Right(resolution.auxL))
-      val mergeRight = conflictGraph(Left(resolution.auxL))
-      val threadLeft  = (this  /:  mergeLeft.reverseOrder(SBMain(main.get)))       { _ merge _ }
-      val threadRight = (other /: mergeRight.reverseOrder(SBMain(other.main.get))) { _ merge _ }
+      val threadLeft  = prepareResolutionWith(SBThread(other.main.get, Right(resolution.auxL)))
+      val threadRight = other.prepareResolutionWith(SBThread(main.get, Left(resolution.auxL)))
 
       // Step 3, 4 and 5
       threadLeft.resolve(threadRight.main.get, resolution.auxL).mergePending(threadRight.pending).mergeMerged(threadRight.merged).mergeCompletePending()
@@ -95,6 +94,7 @@ case class SimpleBraid(
       val pendingDivided = pending mapValues {_ / divisor}
       SimpleBraid(
         None,
+        pGraph,
         main match {
           case None => pendingDivided
           case Some(subproof) => pendingDivided + (SBThread(subproof,pivot) -> (Rational.one / divisor))
@@ -111,10 +111,16 @@ case class SimpleBraid(
 
   // Utils functions
 
+  def prepareResolutionWith(other: SBThread) = {
+    val (_,out) = pGraph.getInOut(other)
+    val subgraph = pGraph.transitiveSubgraph(out)
+    (this /: subgraph.reverseOrder(SBMain(main.get))) { _ merge _ }
+  }
+
   // main methods
 
   def resolve(subproof: SequentProofNode, pivot: E) = 
-    SimpleBraid(Some(R(main.get, subproof, pivot)), pending, merged)
+    SimpleBraid(Some(R(main.get, subproof, pivot)), pGraph, pending, merged)
 
   // pending methods
 
@@ -128,33 +134,34 @@ case class SimpleBraid(
       val fraction = pending(thread)
       val nMerged = if (fraction < Rational.one) merged + (thread -> fraction) else merged
       (main, pivot) match {
-        case (None, _)           => SimpleBraid(Some(subproof),          pending - thread, nMerged)
-        case (Some(s), Left(p))  => SimpleBraid(Some(R(subproof, s, p)), pending - thread, nMerged)
-        case (Some(s), Right(p)) => SimpleBraid(Some(R(s, subproof, p)), pending - thread, nMerged)
+        case (None, _)           => SimpleBraid(Some(subproof),          pGraph - thread, pending - thread, nMerged)
+        case (Some(s), Left(p))  => SimpleBraid(Some(R(subproof, s, p)), pGraph - thread, pending - thread, nMerged)
+        case (Some(s), Right(p)) => SimpleBraid(Some(R(s, subproof, p)), pGraph - thread, pending - thread, nMerged)
       }
     case _ => throw new Exception("Unable to merge non-thread")
   }
-
-  def mergeMap(a: Map[SBThread, Rational], b: Map[SBThread, Rational]) =
-    (a /: b) { (acc, kv) =>
-      val (thread, fraction) = kv
-      if (acc contains thread) {
-        val newFraction = fraction + acc(thread)
-        acc + (thread -> newFraction)
-      }
-      else acc + (thread -> fraction)
-    }
 
   def mergePending(m: Map[SBThread, Rational]) = (this /: m) { (acc,kv) =>
     val (key, fraction) = kv
     if (acc.merged contains key) {
       val nfrac = fraction + acc.merged(key)
-      SimpleBraid(acc.main, acc.pending + (key -> nfrac), acc.merged - key)
+      SimpleBraid(acc.main, acc.pGraph + key, acc.pending + (key -> nfrac), acc.merged - key)
     }
-    else {
-      val nfrac = fraction + acc.pending.getOrElse(key, Rational.zero)
-      SimpleBraid(acc.main, acc.pending + (key -> nfrac), acc.merged)
+    else if (acc.pending contains key) {
+      val nfrac = fraction + acc.pending(key)
+      SimpleBraid(acc.main, acc.pGraph, acc.pending + (key -> nfrac), acc.merged)
     }
+    else
+      SimpleBraid(acc.main, acc.pGraph + key, acc.pending + (key -> fraction), acc.merged)
+  }
+
+  def mergeCompletePending() = {
+//    println("\n mergeCompletePending")
+    val subgraph = pGraph.subgraph( {
+      case key: SBThread => pending(key) >= Rational.one
+      case _ => false
+    } )
+    (this /: subgraph.reverseOrder(SBMain(main.get))) { _ merge _ }
   }
 
   // merged methods
@@ -163,63 +170,22 @@ case class SimpleBraid(
     val (key, fraction) = kv
     if (acc.pending contains key) {
       val nfrac = fraction + acc.pending(key)
-      SimpleBraid(acc.main, acc.pending + (key -> nfrac), acc.merged)
+      SimpleBraid(acc.main, acc.pGraph, acc.pending + (key -> nfrac), acc.merged)
     }
     else if (acc.merged contains key) {
       val nfrac = fraction + acc.merged(key)
       if (nfrac < Rational.one) 
-        SimpleBraid(acc.main, acc.pending, acc.merged + (key -> nfrac))
+        SimpleBraid(acc.main, acc.pGraph, acc.pending, acc.merged + (key -> nfrac))
       else
-        SimpleBraid(acc.main, acc.pending, acc.merged - key)
+        SimpleBraid(acc.main, acc.pGraph, acc.pending, acc.merged - key)
     }
     else
-      SimpleBraid(acc.main, acc.pending, acc.merged + (key -> fraction))
+      SimpleBraid(acc.main, acc.pGraph, acc.pending, acc.merged + (key -> fraction))
   }
 
-  // Miscellaneous (TODO: tidy it up)
+  // Miscellaneous
 
   def sizes = (main.size, pending.size, merged.size)
-
-  def conflictGraph(pivot: Either[E,E]) = {
-//      println("conflictGraph")
-      val graph  = new ConflictGraph[GraphVertex]()
-
-      @tailrec
-      def collectPending(pivots: Seq[Either[E,E]], parg: Map[SBThread,Rational]):Unit = {
-        var p = parg
-//        println(pivots)
-        var nPivots = List[Either[E,E]]()
-
-        for (key @ SBThread(subproof, pivot) <- p.keys)
-          pivots foreach { _ match {
-              case Left(l)  if (subproof.conclusion.ant contains l) =>
-//                println("Add "+subproof.conclusion+" "+pivot)
-                graph += key
-                p = p - key
-                nPivots = pivot::nPivots
-              case Right(l) if (subproof.conclusion.suc contains l) =>
-//                println("Add "+subproof.conclusion+" "+pivot)
-                graph += key
-                p = p - key
-                nPivots = pivot::nPivots
-              case _ => ()
-            } }
-        
-        if ((nPivots.size > 0) && (p.size > 0)) collectPending(nPivots, p)
-
-      }
-
-      collectPending(List(pivot), pending)
-      graph
-  }
-
-  def mergeCompletePending() = {
-//    println("\n mergeCompletePending")
-    val graph = new ConflictGraph[GraphVertex]()
-    for ((key, fraction) <- pending)
-      if (fraction >= Rational.one) graph += key
-    (this /: graph.reverseOrder(SBMain(main.get))) { _ merge _ }
-  }
 
 }
 

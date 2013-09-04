@@ -2,8 +2,8 @@ package at.logic.skeptik.algorithm.compressor.middleLower
 
 import at.logic.skeptik.util.UnionFind
 
-import collection.immutable.{HashSet => ISet}
-import collection.mutable.{HashMap => MMap, HashSet => MSet}
+import collection.immutable.{HashSet => ISet, HashMap => IMap, Map}
+import collection.mutable.{HashMap => MMap}
 import annotation.tailrec
 
 trait VertexAndOutgoingEdges[V] {
@@ -13,31 +13,33 @@ trait LeafWithoutOutgoingEdges[V] extends VertexAndOutgoingEdges[V] {
   def edgeTo(other: V) = false
 }
 
-class ConflictGraph[T <: VertexAndOutgoingEdges[T]] {
-  protected val matrix = MMap[T,MSet[T]]()
+class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
+  protected val matrix: Map[T,ISet[T]]
+) {
 
-  def +=(elt: T) =
-    if (matrix contains elt) ()
-    else {
-      val sup = MSet[T]()
-      for (other <- matrix.keys) {
-        if      (elt   edgeTo other)         sup += other
-        else if (other edgeTo elt) matrix(other) += elt
-      }
-      matrix(elt) = sup
-    }
+  def +(elt: T) = {
+    // This implementation is slow because the matrix is traversed twice.
+    // TODO: Faster implementation.
+    val (in,out) = getInOut(elt)
+    new ConflictGraph[T]((IMap(elt -> out) /: matrix) { (acc,kv) =>
+      val (key, vOut) = kv
+      if (in contains key)
+        acc + (key -> (vOut + elt))
+      else
+        acc + kv
+    })
+  }
+
+  def -(elt: T) = new ConflictGraph[T]((matrix - elt) mapValues { _ - elt })
 
   def contains(elt: T) = matrix contains elt
 
-  def getInOut(elt: T) = {
-    val in = MSet[T]()
-    val out = MSet[T]()
-    for (other <- matrix.keys) {
-      if      (elt   edgeTo other) out += other
-      else if (other edgeTo elt)    in += elt
+  def getInOut(elt: T) =
+    ((ISet[T](), ISet[T]()) /: matrix.keys) { (acc,other) =>
+      val (in,out) = acc
+      ( if (other edgeTo elt)   in  + elt   else in,
+        if (elt   edgeTo other) out + other else out )
     }
-    (in, out)
-  }
     
   /** Find cycles a new element would introduce in the graph.
    * The new element is not added to the graph.
@@ -63,37 +65,40 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]] {
     }
   }     
     
-  def subgraph(vertice: Set[T]) = {
-    val ret = new ConflictGraph[T]()
-    for (vertex <- vertice) { ret.matrix(vertex) = matrix(vertex) & vertice }
-    ret
-  }
+  def subgraph(filterElts: T => Boolean) = 
+    new ConflictGraph[T]((IMap[T,ISet[T]]() /: matrix) { (acc,kv) =>
+      val (key,vOut) = kv
+      if (filterElts(key))
+        acc + (key -> (vOut filter filterElts))
+      else
+        acc
+    })
 
   /** The subgraph such that if a ∈ subgraph and a → b in the graph, then b ∈ subgraph.
    */
-  def transitiveSubgraph(baseVertice: Set[T]) = {
-    val ret = new ConflictGraph[T]()
-
+  def transitiveSubgraph(baseVertice: ISet[T]) = {
     @tailrec
-    def addVertex(remain: Set[T]):Unit = 
-      if (remain.isEmpty) ()
+    def addVertex(remain: ISet[T], m: IMap[T,ISet[T]]):IMap[T,ISet[T]] = 
+      if (remain.isEmpty) m
       else {
         val vertex = remain.head
-        ret.matrix(vertex) = matrix(vertex)
-        addVertex((remain | matrix(vertex)) &~ ret.matrix.keySet)
+        val nMatrix = m + (vertex -> matrix(vertex))
+        addVertex((remain | matrix(vertex)) &~ nMatrix.keySet, nMatrix)
       }
 
-    addVertex(baseVertice)
-    ret
+    new ConflictGraph[T](addVertex(baseVertice, IMap()))
   }
 
   def reverseOrder(from: T):Iterator[T] = {
-    val map = matrix.clone
-    for (other <- map.keys) if (other edgeTo from) map(other) += from
+    val map = MMap[T,ISet[T]]()
+    if (matrix contains from)
+      throw new NotImplementedError()
+    else
+      for (other <- map.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
     new ReverseOrderIterator(map, from)
   }
 
-  class ReverseOrderIterator(val matrix: MMap[T,MSet[T]], from: T) extends Iterator[T] {
+  class ReverseOrderIterator(val matrix: MMap[T,ISet[T]], from: T) extends Iterator[T] {
     val uf = new UnionFind[T]()
     var cur = from
     var nextBuffer: Option[T] = None
@@ -136,4 +141,8 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]] {
       else throw new NoSuchElementException()
   }
 
+}
+
+object ConflictGraph {
+  def apply[T <: VertexAndOutgoingEdges[T]]() = new ConflictGraph[T](IMap())
 }

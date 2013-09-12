@@ -30,9 +30,9 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
               },
               Right(pivot)
             )
-//            println("\nResolve "+newLeft+" with "+newRight+" on "+resolution.auxL)
+            println("\nResolve "+newLeft+" with "+newRight+" on "+resolution.auxL)
             val r = newLeft.resolveWith(newRight, resolution)
-//            println("Resolve result: "+r)
+            println("Resolve result: "+r)
             r
 
           // Ugly catchall

@@ -2,6 +2,7 @@ package at.logic.skeptik.algorithm.compressor.middleLower
 
 import at.logic.skeptik.util.UnionFind
 
+import collection.{GenTraversableOnce, GenSet}
 import collection.immutable.{HashSet => ISet, HashMap => IMap, Map}
 import collection.mutable.{HashMap => MMap}
 import annotation.tailrec
@@ -38,7 +39,31 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
 
   def -(elt: T) = new ConflictGraph[T]((matrix - elt) mapValues { _ - elt })
 
+  def --(elts: GenTraversableOnce[T]) = new ConflictGraph((matrix -- elts) mapValues { _ -- elts})
+
+  def removeIncomingTo(elt: T) = new ConflictGraph(matrix mapValues { _ - elt})
+
+  def removeEdge(from: T, to: T) = new ConflictGraph(matrix map { kv => if (kv._1 == from) (kv._1 -> (kv._2 - to)) else kv })
+
+  def removeEdges(from: T, to: GenSet[T]) = new ConflictGraph(matrix map { kv => if (kv._1 == from) (kv._1 -> (kv._2 &~ to)) else kv })
+
+  /** Remove all the leaves except the given one
+   */
+  @tailrec
+  final def removeLeavesBut(leaf: T):ConflictGraph[T] = // TODO: check whether using leaves and removing them all performs better
+    matrix find { kv => kv._1 != leaf && kv._2.isEmpty } match {
+      case Some(v) => (this - v._1).removeLeavesBut(leaf)
+      case None => this
+    }
+
+
+  def outgoings(from: T) = matrix(from)
+
+  def leaves = matrix.keySet filter { matrix(_).isEmpty }
+
   def contains(elt: T) = matrix contains elt
+
+  def exists(filter: T => Boolean) = matrix.keys exists filter
 
   def size = matrix.size
 
@@ -48,7 +73,49 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
       ( if (other edgeTo elt)   in  + other else in,
         if (elt   edgeTo other) out + other else out )
     }
+
+  def hasPath(from: T, to: T) = {
+    def search(visited: ISet[T])(from: T):Boolean =
+      if (matrix(from) contains to) true
+      else (matrix(from) &~ visited) exists search(visited + from)
+
+    if (matrix contains from)
+      search(ISet[T]())(from)
+    else
+      false
+  }
     
+
+  // Subgraphs
+
+  def subgraph(filterElts: T => Boolean) = 
+    new ConflictGraph[T]((IMap[T,ISet[T]]() /: matrix) { (acc,kv) =>
+      val (key,vOut) = kv
+      if (filterElts(key))
+        acc + (key -> (vOut filter filterElts))
+      else
+        acc
+    })
+
+  /** The subgraph such that if a ∈ subgraph and a → b in the graph, then b ∈ subgraph.
+   */
+  def transitiveSubgraph(filterElts: T => Boolean) = {
+    @tailrec
+    def addVertex(remain: Set[T], m: IMap[T,ISet[T]]):IMap[T,ISet[T]] = 
+      if (remain.isEmpty) m
+      else {
+        val vertex = remain.head
+        val nMatrix = m + (vertex -> matrix(vertex))
+        addVertex((remain | matrix(vertex)) &~ nMatrix.keySet, nMatrix)
+      }
+
+    val baseVertice = if (filterElts.isInstanceOf[Set[T]]) filterElts.asInstanceOf[Set[T]] else matrix.keySet filter filterElts
+    new ConflictGraph[T](addVertex(baseVertice, IMap()))
+  }
+
+
+  // Cycles
+
   /** Find cycles a new element would introduce in the graph.
    * The new element is not added to the graph.
    *
@@ -72,32 +139,84 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
       search(ISet(e),ISet())
     }
   }     
-    
-  def subgraph(filterElts: T => Boolean) = 
-    new ConflictGraph[T]((IMap[T,ISet[T]]() /: matrix) { (acc,kv) =>
-      val (key,vOut) = kv
-      if (filterElts(key))
-        acc + (key -> (vOut filter filterElts))
-      else
-        acc
-    })
 
-  /** The subgraph such that if a ∈ subgraph and a → b in the graph, then b ∈ subgraph.
-   */
-  def transitiveSubgraph(baseVertice: ISet[T]) = {
+  def findCycle = {
     @tailrec
-    def addVertex(remain: ISet[T], m: IMap[T,ISet[T]]):IMap[T,ISet[T]] = 
-      if (remain.isEmpty) m
-      else {
-        val vertex = remain.head
-        val nMatrix = m + (vertex -> matrix(vertex))
-        addVertex((remain | matrix(vertex)) &~ nMatrix.keySet, nMatrix)
-      }
+    def expandPath(start: T, path: List[(T, List[List[T]])], extension: IMap[T, List[List[T]]]):Either[(T, List[List[T]]), List[T]] = path match {
+      case (last, more)::q if extension contains last =>
+        @tailrec
+        def computePath(after: List[List[T]], next: IMap[T, List[List[T]]]):Either[IMap[T, List[List[T]]], List[T]] = after match {
+          case (l @ h::_)::_ if (h == start) => Right(l ++ extension(last).head)
+          case (l @ h::_)::q =>
+            val paths = extension(last) map { l ++ _ }
+            computePath(q, next + (h -> (next.getOrElse(h,List[List[T]]()) ++ paths)))
+          case Nil  => Left(next)
+        }
 
-    new ConflictGraph[T](addVertex(baseVertice, IMap()))
+        computePath(more, extension) match {
+          case Left(next)   => expandPath(start, q, next)
+          case Right(cycle) => Right(cycle)
+        }
+
+      case _::q =>
+        expandPath(start, q, extension)
+
+      case Nil =>
+        val nPath = (List[List[T]]() /: extension) { (acc,kv) => kv._2 ++ acc }
+        Left((start, nPath))
+    }
+
+    val keys = matrix.keysIterator
+    @tailrec
+    def search(paths: List[(T, List[List[T]])]):Option[Set[T]] =
+      if (keys.hasNext) {
+        val start = keys.next()
+        val extension = (IMap[T, List[List[T]]]() /: matrix(start)) { (acc,elt) => acc + (elt -> List(List(elt))) }
+        expandPath(start, paths, extension) match {
+          case Left(nPath) => search(paths :+ nPath)
+          case Right(cycle) => Some(cycle.toSet)
+        }
+      } else None
+
+    search(List())
   }
 
-  def reverseOrder(from: T):Iterator[T] = {
+  /** Delete edges from the cycle (not the vertices)
+   */
+  def removeCycle(cycle: Set[T]) =
+    new ConflictGraph(matrix map { kv =>
+      val (key, vOut) = kv
+      if (cycle contains key) (key, vOut &~ cycle) else kv
+    })
+
+
+
+  // sort
+
+  /** Sort by number of incoming edges
+   */
+  def sortByIncoming = {
+    val map = MMap[T,Int]()
+    for ((from,v) <- matrix)
+      for (to <- v)
+        map(to) = map.getOrElse(to,0) + 1
+    map.keys.toSeq sortWith { (a,b) => map.getOrElse(a,0) < map.getOrElse(b,0) }
+  }
+      
+
+  /** Topological sort in reversed order
+   */
+  def reverseOrder = (matrix find { _._2.isEmpty }) match {
+    case Some((from,_)) =>
+      val map = MMap[T,ISet[T]]()
+      for (other <- matrix.keys) if (other != from) map(other) = matrix(other)
+      new ReverseOrderIterator(map, from)
+    case None => throw new Exception("Cyclic graph")
+  }
+
+  /** Topological sort in reversed order
+   */
+  def reverseOrderFrom(from: T):Iterator[T] = {
     val map = MMap[T,ISet[T]]()
     if (matrix contains from)
       throw new NotImplementedError()
@@ -134,7 +253,7 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
             nextBuffer = Some(v)
             true
           case None =>
-//            println(matrix)
+            println("None 221 size "+matrix.size)
             cont = false
             false
         }
@@ -157,8 +276,7 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
     }
 
   def aff() =
-    for ((from,to) <- edges) println(from+" -> "+to)
-      
+    for ((from,to) <- edges) println("\""+from+"\" -> \""+to+"\"")
 
 }
 

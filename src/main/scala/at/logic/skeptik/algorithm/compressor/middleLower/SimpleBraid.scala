@@ -17,10 +17,15 @@ object r {
 
   private[middleLower] abstract sealed class GraphVertex(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[GraphVertex]
   private[middleLower] final case class SBThread(sp: SequentProofNode, val pivot: Either[E,E]) extends GraphVertex(sp) {
+    require(pivot match {
+      case Left(l)  => sp.conclusion.suc contains l
+      case Right(l) => sp.conclusion.ant contains l
+    })
     def edgeTo(other: GraphVertex) = pivot match {
       case Left(l)  => other.subproof.conclusion.ant contains l
       case Right(l) => other.subproof.conclusion.suc contains l
     }
+    override def toString() = hashCode().toString() + pivot.toString()
   }
   private[middleLower] final case class SBMain(sp: SequentProofNode) extends GraphVertex(sp) with LeafWithoutOutgoingEdges[GraphVertex]
 }
@@ -38,12 +43,13 @@ case class SimpleBraid(
   def resolveWith(other: SimpleBraid, resolution: R):SimpleBraid = (this.sizes, other.sizes) match {
 
     // Less than 2 main threads
-    case ((0,_,0), (0,_,0)) =>
-      mergePending(other.pending)
-    case (_, (0,_,0)) =>
-      mergePending(other.pending).mergeCompletePending()
-    case ((0,_,0), _) =>
-      other.mergePending(pending).mergeCompletePending()
+    case ((0,_,_), (0,_,_)) =>
+      // TODO: check completed with Left(p) and corresponding Right(p)
+      mergeMerged(other.merged).mergePending(other.pending)
+    case ((1,_,_), (0,_,_)) =>
+      mergeMerged(other.merged).mergePending(other.pending).mergeCompletePending()
+    case ((0,_,_), (1,_,_)) =>
+      other.mergeMerged(merged).mergePending(pending).mergeCompletePending()
 
     // Too simple cases
     case ((1,0,0), (1,0,0)) =>
@@ -54,17 +60,17 @@ case class SimpleBraid(
 
     // Regularisation cases
     case ((1,_,_), (1,_,_)) if (hasPending(Right(resolution.auxL))) =>
-//      println("** Resolution "+Right(resolution.auxL))
+      println("** Resolution "+Right(resolution.auxL))
       mergeMerged(other.pending).mergeMerged(other.merged).mergeCompletePending()
     case ((1,_,_), (1,_,_)) if (other.hasPending(Left(resolution.auxL))) =>
-//      println("** Resolution "+Left(resolution.auxL))
+      println("** Resolution "+Left(resolution.auxL))
       other.mergeMerged(pending).mergeMerged(merged).mergeCompletePending()
 
     // Delay cases
     case ((1,_,_), (1,_,_)) if !(main.get.conclusion.suc contains resolution.auxL) && (other.main.get.conclusion.ant contains resolution.auxL) =>
       mergePending(other.pending + (SBThread(other.main.get, Right(resolution.auxL)) -> Rational.one)).mergeMerged(other.merged).mergeCompletePending()
     case ((1,_,_), (1,_,_)) if (main.get.conclusion.suc contains resolution.auxL) && !(other.main.get.conclusion.ant contains resolution.auxL) =>
-      other.mergePending(pending + (SBThread(main.get, Right(resolution.auxL)) -> Rational.one)).mergeMerged(merged).mergeCompletePending()
+      other.mergePending(pending + (SBThread(main.get, Left(resolution.auxL)) -> Rational.one)).mergeMerged(merged).mergeCompletePending()
 
 
     // Main case
@@ -85,21 +91,134 @@ case class SimpleBraid(
       threadLeft.resolve(threadRight.main.get, resolution.auxL).mergePending(threadRight.pending).mergeMerged(threadRight.merged).mergeCompletePending()
 
 
+    // Hard cases: the pivot is neither on the left nor on the right
+    case ((1,x,_), (1,y,_)) if (x*y > 0) && (main.get.conclusion.size <= other.main.get.conclusion.size) =>
+      val subgraph = other.pGraph transitiveSubgraph { _.subproof.conclusion.ant contains resolution.auxL }
+      val braid = (other /: subgraph.reverseOrderFrom(SBMain(other.main.get))) { _ merge _ }
+      val nPending = braid.pending + (SBThread(braid.main.get, Right(resolution.auxL)) -> Rational.one)
+      mergeMerged(braid.merged).mergePending(nPending).mergeCompletePending()
+
+    case ((1,x,_), (1,y,_)) if (x*y > 0) && (main.get.conclusion.size > other.main.get.conclusion.size) =>
+      val subgraph = pGraph transitiveSubgraph { _.subproof.conclusion.suc contains resolution.auxL }
+      val braid = (this /: subgraph.reverseOrderFrom(SBMain(main.get))) { _ merge _ }
+      val nPending = braid.pending + (SBThread(braid.main.get, Left(resolution.auxL)) -> Rational.one)
+      other.mergeMerged(braid.merged).mergePending(nPending).mergeCompletePending()
+
+
     // Catch all
     case (t,o) => throw new Exception("Unhandled situation "+t+" "+o)
   }
   
-  def divise(divisor: Int, pivot: Either[E,E]) = 
+  def divise(divisor: Int, pivot: Either[E,E]) = {
+//    require((if (main.isEmpty) pGraph else pGraph + SBMain(main.get)).leaves.size == 1, this)
     if (divisor == 1) this else {
-      val pendingDivided = pending mapValues {_ / divisor}
-      val mergedDivided = merged mapValues {_ / divisor}
+      println("\nDivise "+this+" on "+pivot)
+//      pGraph.aff()
+      val subproofFilter = pivot match {
+        case Left(l)  => { s:SequentProofNode => s.conclusion.suc contains l }
+        case Right(l) => { s:SequentProofNode => s.conclusion.ant contains l }
+      }
+
+      lazy val pendingDivided = pending mapValues {_ / divisor}
+      lazy val mergedDivided  = merged  mapValues {_ / divisor}
       main match {
-        case None => SimpleBraid(None, pGraph, pendingDivided, mergedDivided)
-        case Some(subproof) =>
-          val nThread = SBThread(subproof,pivot)
+        case None =>
+          SimpleBraid(None, pGraph, pendingDivided, mergedDivided)
+        case Some(subproof) if subproofFilter(subproof) =>
+          val nThread = SBThread(subproof, pivot)
           SimpleBraid(None, pGraph + nThread, pendingDivided + (nThread -> (Rational.one / divisor)), mergedDivided)
+        case Some(subproof) if hasPending(pivot) =>
+          throw new NotImplementedError("TODO: Allow SBMain in pending")
+//          val nThread = SBMain(subproof)
+//          SimpleBraid(None, pGraph + nThread, pendingDivided + (nThread -> (Rational.one / divisor)), mergedDivided)
+        case Some(subproof) =>
+          /* Recipe if subproof doesn't contain the pivot:
+           * 1) add SBMain to the graph
+           * 2) collect finals threads (ie having the pivots)
+           * 3) extract the transitive subgraph
+           * 4) remove finals in cycles as long as they're still some finals left
+           * 5) if there are still cycles involving finals, removes the edges going to an arbitrary selected final
+           * 6) topological sort and merge
+           */
+
+          // Step 1
+          // TODO because it's useless until the previous case happens
+  
+          // Step 2
+          val finals = pending.keySet filter { v:GraphVertex => subproofFilter(v.subproof) } map { _.asInstanceOf[GraphVertex] }
+          println("Finals "+finals.size)
+          for (v <- finals) { println("  "+v.subproof.conclusion) }
+
+          // Step 3
+          val presubgraph = ((pGraph transitiveSubgraph finals) + SBMain(subproof)).removeLeavesBut(SBMain(subproof))
+
+          // Step 4 & 5
+          @tailrec
+          def removeCycles(subgraph: ConflictGraph[GraphVertex], finals: Set[GraphVertex]):ConflictGraph[GraphVertex] = subgraph.findCycle match {
+            case None => subgraph
+            case Some(cycle) if (cycle & finals).isEmpty =>
+              println("Found non-finals cycle")
+              
+              cycle find {
+                case ta @ SBThread(_,pa) => subgraph exists {
+                    case tb @ SBThread(_,pb) => pa == pb && !cycle(tb)
+                    case _ => false
+                  }
+                case _ => false
+              } match {
+                case Some(v) =>
+                  println("Removing edges from "+v)
+                  removeCycles(subgraph.removeEdges(v, cycle), finals)
+                case None =>
+                  if (cycle.size == 2) {
+                    val first::second::Nil = cycle.toList
+                    println("  "+first+" <-> "+second)
+                    val subfirst = subgraph.removeEdge(first, second)
+                    if (subfirst.hasPath(first,second))
+                      removeCycles(subgraph.removeEdge(second, first), finals)
+                    else
+                      removeCycles(subfirst, finals)
+                  }
+                  else
+                    removeCycles(subgraph.removeCycle(cycle), finals)
+              }
+            case Some(cycle) =>
+              println("Found finals cycle "+cycle)
+              val nFinals = finals &~ cycle
+              if (nFinals.isEmpty)
+                removeCycles(subgraph.removeIncomingTo(cycle.head), finals)
+              else
+                removeCycles(subgraph transitiveSubgraph nFinals, nFinals)
+          }
+
+          val subgraph = removeCycles(presubgraph, finals).removeLeavesBut(SBMain(subproof))
+
+          // Step 5bis: ensure each node has at most one incoming edge labeled with any pivot
+          val (step5bisSubgraph, _) = ((subgraph, IMap[Either[E,E],Set[GraphVertex]]()) /: subgraph.sortByIncoming) { (acc,v) =>
+            val (subgraph, pivots) = acc
+            v match {
+              case SBThread(_,pivot) if pivots contains pivot =>
+                val curTo = pivots(pivot)
+                println("Removing from "+v+" to "+(curTo & subgraph.outgoings(v)))
+                (subgraph.removeEdges(v, curTo), pivots + (pivot -> (curTo ++ subgraph.outgoings(v))))
+              case SBThread(_,pivot) =>
+                (subgraph, pivots + (pivot -> subgraph.outgoings(v)))
+              case _ =>
+                (subgraph, pivots)
+            }
+          }
+          val finalSubgraph = step5bisSubgraph.removeLeavesBut(SBMain(subproof))
+          println("filtered ("+finalSubgraph.size+"):")
+          finalSubgraph.aff()
+
+          // Step 6
+          val braid = (this /: finalSubgraph.reverseOrder) { _ merge _ }
+          println("braid "+braid)
+          val nThread = SBThread(braid.main.get, pivot)
+          SimpleBraid(None, braid.pGraph + nThread, pendingDivided + (nThread -> (Rational.one / divisor)), mergedDivided)
       }
     }
+  }
 
   def finalMerge = main match {
     case Some(subproof) => println("Final "+sizes) ; subproof
@@ -112,7 +231,7 @@ case class SimpleBraid(
   def prepareResolutionWith(other: SBThread) = {
     val (_,out) = pGraph.getInOut(other)
     val subgraph = pGraph.transitiveSubgraph(out)
-    (this /: subgraph.reverseOrder(SBMain(main.get))) { _ merge _ }
+    (this /: subgraph.reverseOrderFrom(SBMain(main.get))) { _ merge _ }
   }
 
   // main methods
@@ -129,7 +248,7 @@ case class SimpleBraid(
 
   def merge(v: GraphVertex) = v match {
     case thread @ SBThread(subproof, pivot) =>
-//      println("Merging "+subproof.conclusion+" into "+(main map {_.conclusion}).toString()+" on "+pivot)
+      println("Merging "+subproof.conclusion+" into "+(main map {_.conclusion}).toString()+" on "+pivot)
       val fraction = pending(thread)
       val nMerged = if (fraction < Rational.one) merged + (thread -> fraction) else merged
       (main, pivot) match {
@@ -155,15 +274,16 @@ case class SimpleBraid(
   }
 
   def mergeCompletePending() = {
-//    println("mergeCompletePending")
-//    pGraph.aff()
+    // TODO: search for completed SBMain ?
+    println("mergeCompletePending")
+    pGraph.aff()
     val subgraph = pGraph.subgraph( {
       case key: SBThread => pending(key) >= Rational.one
       case x => false
     } )
-//    println("filtered ("+subgraph.size+"):")
-//    subgraph.aff()
-    (this /: subgraph.reverseOrder(SBMain(main.get))) { _ merge _ }
+    println("filtered ("+subgraph.size+"):")
+    subgraph.aff()
+    (this /: subgraph.reverseOrderFrom(SBMain(main.get))) { _ merge _ }
   }
 
   // merged methods

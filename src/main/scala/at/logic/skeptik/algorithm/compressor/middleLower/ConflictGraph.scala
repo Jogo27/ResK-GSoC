@@ -17,6 +17,7 @@ trait LeafWithoutOutgoingEdges[V] extends VertexAndOutgoingEdges[V] {
 class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
   protected val matrix: Map[T,ISet[T]]
 ) {
+  require(matrix forall { _._2 forall { matrix contains _ } })
 
   def +(elt: T) = {
     // This implementation is slow because the matrix is traversed twice.
@@ -41,7 +42,9 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
 
   def --(elts: GenTraversableOnce[T]) = new ConflictGraph((matrix -- elts) mapValues { _ -- elts})
 
-  def removeIncomingTo(elt: T) = new ConflictGraph(matrix mapValues { _ - elt})
+  def removeIncomingTo(to: T) = new ConflictGraph(matrix mapValues { _ - to})
+
+  def removeIncomingsTo(to: GenSet[T]) = new ConflictGraph(matrix mapValues { _ &~ to})
 
   def removeEdge(from: T, to: T) = new ConflictGraph(matrix map { kv => if (kv._1 == from) (kv._1 -> (kv._2 - to)) else kv })
 
@@ -52,7 +55,7 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
   @tailrec
   final def removeLeavesBut(leaf: T):ConflictGraph[T] = // TODO: check whether using leaves and removing them all performs better
     matrix find { kv => kv._1 != leaf && kv._2.isEmpty } match {
-      case Some(v) => (this - v._1).removeLeavesBut(leaf)
+      case Some(v) => println("Remove leaf "+v._1) ; (this - v._1).removeLeavesBut(leaf)
       case None => this
     }
 
@@ -110,7 +113,11 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
       }
 
     val baseVertice = if (filterElts.isInstanceOf[Set[T]]) filterElts.asInstanceOf[Set[T]] else matrix.keySet filter filterElts
-    new ConflictGraph[T](addVertex(baseVertice, IMap()))
+//    val baseVertice = matrix.keySet filter filterElts
+    val ret = new ConflictGraph[T](addVertex(baseVertice, IMap()))
+    println("Transitive subgraph from "+baseVertice+" gives ("+ret.size+"):")
+    ret.aff()
+    ret
   }
 
 
@@ -200,7 +207,7 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
     for ((from,v) <- matrix)
       for (to <- v)
         map(to) = map.getOrElse(to,0) + 1
-    map.keys.toSeq sortWith { (a,b) => map.getOrElse(a,0) < map.getOrElse(b,0) }
+    matrix.keys.toSeq sortWith { (a,b) => map.getOrElse(a,0) < map.getOrElse(b,0) }
   }
       
 

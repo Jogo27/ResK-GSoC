@@ -1,0 +1,21 @@
+Task RRT [
+  RR,
+  RRlm,
+  RRST,
+  RRCST,
+  RRlmST,
+  RRHST,
+  RROT,
+  RRCOT,
+  RRlmOT,
+  RRHOT,
+  RRROT,
+  RRCROT,
+  RRlmROT,
+  RRHROT
+]
+Job RRJ {
+  tasks: [ RRT ],
+  reports: [ Verify, HumanReadable, BestWorse ]
+}
+run [ RRJ ]

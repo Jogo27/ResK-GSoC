@@ -18,7 +18,8 @@ libraryDependencies ++= Seq(
   "com.github.scopt" % "scopt_2.10" % "3.1.0",
   "com.github.scala-incubator.io" %% "scala-io-core" % "0.4.2",
   "com.github.scala-incubator.io" %% "scala-io-file" % "0.4.2",
-  "org.spire-math" %% "spire" % "0.5.0"
+  "org.spire-math" %% "spire" % "0.5.0",
+  "org.scalaz" % "scalaz-core_2.10" % "7.0.3"
 )
 
 licenses := Seq("CC BY-NC-SA" -> url("http://creativecommons.org/licenses/by-nc-sa/3.0/"))

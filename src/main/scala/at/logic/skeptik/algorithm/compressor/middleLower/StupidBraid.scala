@@ -14,19 +14,28 @@ import annotation.tailrec
 
 object r {
   implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(node), ConflictGraph[GraphVertex](), IMap(), IMap())
-
-  final case class StThread(val subproof: SequentProofNode, val  part: Rational) {
-    def conclusion = subproof.conclusion
-    def hasLiteral(lit: Literal) = lit match {
-      case  Left(a) => conclusion.ant contains a
-      case Right(b) => conclusion.suc contains b
-    }
-    def withPart(newPart: Rational) = StThread(subproof, newPart)
-  }
-
-  type Literal = Either[E,E]
 }
 import r._
+
+type Literal = Either[E,E]
+
+private[middleLower] abstract sealed class StThread(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[GraphVertex] {
+  def conclusion = subproof.conclusion
+}
+private[middleLower] final case class PendingThread(sp: SequentProofNode, val pivot: Either[E,E], val part: Rational) extends GraphVertex(sp) {
+  require(pivot match {
+    case Left(l)  => sp.conclusion.suc contains l
+    case Right(l) => sp.conclusion.ant contains l
+  })
+  def edgeTo(other: GraphVertex) = pivot match {
+    case Left(l)  => other.conclusion.ant contains l
+    case Right(l) => other.conclusion.suc contains l
+  }
+  override def toString() =
+//      hashCode().toString() + pivot.toString()
+    subproof.conclusion.toString() + " " + pivot.toString()
+}
+private[middleLower] final case class MainThread(sp: SequentProofNode) extends GraphVertex(sp) with LeafWithoutOutgoingEdges[GraphVertex]
 
 case class SimpleBraid(
   val main:    Option[SequentProofNode],

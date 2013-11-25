@@ -14,39 +14,48 @@ import annotation.tailrec
 
 object r {
   implicit def initBraid(node: SequentProofNode) = SimpleBraid(Some(node), ConflictGraph[GraphVertex](), IMap(), IMap())
+
+  type Literal = Either[E,E]
+
+  private[middleLower] abstract sealed class StThread(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[GraphVertex] {
+    def conclusion = subproof.conclusion
+  }
+  private[middleLower] final case class PendingThread(sp: SequentProofNode, val pivot: Either[E,E]) extends GraphVertex(sp) {
+    require(pivot match {
+      case Left(l)  => sp.conclusion.suc contains l
+      case Right(l) => sp.conclusion.ant contains l
+    })
+    def edgeTo(other: GraphVertex) = pivot match {
+      case Left(l)  => other.conclusion.ant contains l
+      case Right(l) => other.conclusion.suc contains l
+    }
+    override def toString() =
+  //      hashCode().toString() + pivot.toString()
+      subproof.conclusion.toString() + " " + pivot.toString()
+  }
+  private[middleLower] final case class MainThread(sp: SequentProofNode) extends GraphVertex(sp) with LeafWithoutOutgoingEdges[GraphVertex]
+
+  object PendingThreadOrdering extends Ordering[PendingThread] {
+    def compare(a: PendingThread, b: PendingThread) = (a.pivot, b.pivot) match {
+      case (Left(_),  Right(_)) => -1
+      case (Right(_), Left(_))  =>  1
+      case (Left(x),  Left(y))  => x compare y
+      case (Right(x), Right(y)) => x compare y
+    }
+  }
 }
 import r._
 
-type Literal = Either[E,E]
-
-private[middleLower] abstract sealed class StThread(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[GraphVertex] {
-  def conclusion = subproof.conclusion
-}
-private[middleLower] final case class PendingThread(sp: SequentProofNode, val pivot: Either[E,E], val part: Rational) extends GraphVertex(sp) {
-  require(pivot match {
-    case Left(l)  => sp.conclusion.suc contains l
-    case Right(l) => sp.conclusion.ant contains l
-  })
-  def edgeTo(other: GraphVertex) = pivot match {
-    case Left(l)  => other.conclusion.ant contains l
-    case Right(l) => other.conclusion.suc contains l
-  }
-  override def toString() =
-//      hashCode().toString() + pivot.toString()
-    subproof.conclusion.toString() + " " + pivot.toString()
-}
-private[middleLower] final case class MainThread(sp: SequentProofNode) extends GraphVertex(sp) with LeafWithoutOutgoingEdges[GraphVertex]
-
-case class SimpleBraid(
-  val main:    Option[SequentProofNode],
-  val pending: OMap[StThread, Rational],
-  val pGraph:  Graph[Literal],
-  val merged:  ISet[StThread]
-) extends ProofBraid[SimpleBraid] {
+case class StupidBraid(
+  val main:      Option[SequentProofNode],
+  val actives:   OMap[PendingThread,Rational],
+  val graph:     Graph[StThread],
+  val inactives: OMap[PendingThread,Rational]
+) extends ProofBraid[StupidBraid] {
 
   // Implentation of ProofBraid's interface
 
-  def resolveWith(other: SimpleBraid, resolution: R):SimpleBraid = (main.sizes, other.main.sizes) match {
+  def resolveWith(other: StupidBraid, resolution: R):StupidBraid = (main.sizes, other.main.sizes) match {
 
     case (0,_) =>
       throw new NotImplementedError
@@ -60,22 +69,44 @@ case class SimpleBraid(
       // - compute shared pending
       // - collect pending with resolution pivot
 
-      def step1n2(leftIt: Iterator[Something], rightIt: Iterator[Something]) = {//TODO
-        def aux(leftBraid: StupidBraid, rightBraid: StupidBraid, shared: ISet[Something], withPivotLeft: ISet[Something], withPivotRight: ISet[Something]):
-               (leftBraid: StupidBraid, rightBraid: StupidBraid, shared: ISet[Something], withPivotLeft: ISet[Something], withPivotRight: ISet[Something]) = (leftIt.hasNext(), rightIt.hasNext()) {
-          case (false,false) =>
-            (leftBraid, rightBraid, shared, withPivotLeft, withPivotRight)
-          case (false,true)  =>
-            val right = rightIt.next()
-            aux(leftBraid, rightBraid, shared, withPivotLeft, if (right.hasLiteral(rightPivot)) withPivotRight + right else withPivotRight)
-          case (true,false) =>
-            val left = leftIT.next()
-            aux(leftBraid, rightBraid, shared, if (left.hasLiteral(leftPivot)) withPivotLeft + left else withPivotLeft, withPivotRight)
-          case (true,true) =>
-            val left  =  leftIT.next()
-            val right = rightIt.next()
-            //TODO: RAHZUT!
-        }
+      def step1n2(leftIt: Iterator[PendingThread], rightIt: Iterator[PendingThread]) = {
+
+        def checkPivot(pivot: Literal)(withPivot: ISet[PendingThread], pending: PendingThread) =
+          if (pending.hasLiteral(pivot)) (withPivot + pending) else withPivot
+
+        def oneSide(it: Iterator[PendingThread], pivot: Literal, withPivot: ISet[PendingThread]): ISet[PendingThread] =
+          (withPivot :/ it) checkPivot(pivot)
+
+        def twoSides( curPendingLeft: PendingThread,  leftBraid: StupidBraid,  withPivotLeft: ISet[PendingThread],
+                      shared: ISet[PendingThread],
+                      curPendingRight: PendingThread, rightBraid: StupidBraid, withPivotRight: ISet[PendingThread]):
+          (StupidBraid, ISet[PendingThread], ISet[PendingThread], StupidBraid, ISet[PendingThread]) =
+          PendingThreadOrdering.compare(curPendingLeft, curPendingRight) match {
+            case n if (n < 0) =>
+              if (leftIt.hasNext()) {
+                val withPivot = checkPivot(leftPivot)(withPivotLeft, curPendingLeft)
+                twoSides(leftIt.next, leftBraid, withPivot, shared, curPendingRight, rightBraid, withPivotRight)
+              }
+              else {
+                val withPivot = oneSide(rightIt, rightPivot, withPivotRight)
+                (leftBraid, withPivotLeft, shared, rightBraid, withPivot)
+              }
+            case p if (p > 0) =>
+              if (rightIt.hasNext()) {
+                val withPivot = checkPivot(rightPivot)(withPivotRight, curPendingRight)
+                twoSides(curPendingLeft, leftBraid, withPivotLeft, shared, rightIt.next, rightBraid, withPivot)
+              }
+              else {
+                val withPivot = oneSide(leftIt, leftPivot, withPivotLeft)
+                (leftBraid, withPivot, shared, rightBraid, withPivotRight)
+              }
+            case 0 => (curPendingLeft.hasLiteral(leftPivot), curPendingRight.hasLiteral(rightPivot)) match {
+              case (false, true) =>
+                val newPart = leftBraid.actives(curPendingLeft) / 2
+                val nLeft = StupidBraid(leftBraid.main, leftBraid.actives.updated(curPendingLeft, newPart), leftBraid.graph, leftBraid.inactives)
+                val nRight = StupidBraid(rightBraid.main, // TODO
+              
+          }
       
 
   }

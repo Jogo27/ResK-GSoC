@@ -44,6 +44,7 @@ package object compressor {
     "RRlmROT" -> RRWithLowerMiddleOTBasedRandomA2,
     "RRHROT" -> RRWithHelsinkiOTBasedRandomA2,
     "SimpleML" -> SimpleMiddleLower,
+    "StML" -> StupidMiddleLower,
     "Split" -> new CottonSplit(30000),
     "RBSplit" -> new RandomBoudouSplit(30000),
     "DBSplit" -> new DeterministicBoudouSplit(5000),

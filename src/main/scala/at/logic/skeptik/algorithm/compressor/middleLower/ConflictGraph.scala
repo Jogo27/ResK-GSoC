@@ -14,10 +14,17 @@ trait LeafWithoutOutgoingEdges[V] extends VertexAndOutgoingEdges[V] {
   def edgeTo(other: V) = false
 }
 
-class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
-  protected val matrix: Map[T,ISet[T]]
-) {
-  require(matrix forall { _._2 forall { matrix contains _ } })
+class AbstractConflictGraph[T <: VertexAndOutgoingEdges[T]](val matrix: Map[T,ISet[T]]) { // TODO; protect matrix
+  def getInOut(elt: T) =
+    ((ISet[T](), ISet[T]()) /: matrix.keys) { (acc,other) =>
+      val (in,out) = acc
+      ( if (other edgeTo elt)   in  + other else in,
+        if (elt   edgeTo other) out + other else out )
+    }
+}
+
+class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) extends AbstractConflictGraph[T](m) {
+//  require(matrix forall { _._2 forall { matrix contains _ } })
 
   def +(elt: T) = {
     // This implementation is slow because the matrix is traversed twice.
@@ -26,17 +33,17 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
 //    aff()
     val (in,out) = getInOut(elt)
 //    println("+ "+elt+" in "+in+" out "+out)
-    val r = new ConflictGraph[T]((IMap(elt -> out) /: matrix) { (acc,kv) =>
+    add(elt, in, out)
+  }
+
+  def add(elt: T, in: ISet[T], out: ISet[T]) =
+    new ConflictGraph[T]((IMap(elt -> out) /: matrix) { (acc,kv) =>
       val (key, vOut) = kv
       if (in contains key)
         acc + (key -> (vOut + elt))
       else
         acc + kv
     })
-//    println("after +")
-//    r.aff()
-    r
-  }
 
   def -(elt: T) = new ConflictGraph[T]((matrix - elt) mapValues { _ - elt })
 
@@ -69,13 +76,6 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
   def exists(filter: T => Boolean) = matrix.keys exists filter
 
   def size = matrix.size
-
-  def getInOut(elt: T) =
-    ((ISet[T](), ISet[T]()) /: matrix.keys) { (acc,other) =>
-      val (in,out) = acc
-      ( if (other edgeTo elt)   in  + other else in,
-        if (elt   edgeTo other) out + other else out )
-    }
 
   def hasPath(from: T, to: T) = {
     def search(visited: ISet[T])(from: T):Boolean =
@@ -118,6 +118,18 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
     println("Transitive subgraph from "+baseVertice+" gives ("+ret.size+"):")
     ret.aff()
     ret
+  }
+
+  def disconnectedFrom(from: T) = {
+    def reach(reached: ISet[T], todo: Set[T]):ISet[T] = {
+      // TODO: perhaps this function may be optimized by filtering ourself
+      val filtered = todo filter { elt => matrix(elt) subsetOf reached }
+      if (filtered.isEmpty)
+        reached
+      else
+        reach(reached ++ filtered, todo -- filtered)
+    }
+    reach(ISet[T](from), matrix.keySet - from)
   }
 
 
@@ -217,23 +229,23 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
     case Some((from,_)) =>
       val map = MMap[T,ISet[T]]()
       for (other <- matrix.keys) if (other != from) map(other) = matrix(other)
-      new ReverseOrderIterator(map, from)
+      new ReverseOrderIterator(map, from, {_ => true})
     case None => throw new Exception("Cyclic graph")
   }
 
-  /** Topological sort in reversed order
-   */
-  def reverseOrderFrom(from: T):Iterator[T] = {
-    val map = MMap[T,ISet[T]]()
-    if (matrix contains from)
-      throw new NotImplementedError()
-    else
-      for (other <- matrix.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
-//    println(map)
-    new ReverseOrderIterator(map, from)
-  }
+  def reverseOrderFrom(from: T):Iterator[T] = collectReverseFrom(from, {_ => true})
 
-  class ReverseOrderIterator(val matrix: MMap[T,ISet[T]], from: T) extends Iterator[T] {
+  def collectReverseFrom(from: T, predicate: T => Boolean):Iterator[T] =
+    if (matrix contains from)
+      (this - from).collectReverseFrom(from, predicate)
+    else {
+      val map = MMap[T,ISet[T]]()
+      for (other <- matrix.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
+      new ReverseOrderIterator(map, from, predicate)
+    }
+
+  class ReverseOrderIterator(val matrix: MMap[T,ISet[T]], from: T, predicate: T => Boolean) extends Iterator[T] {
+  // Note: predicate is NOT assumed to be a "pure function", making the iterator slower. Perhaps should it be less general and more efficient.
     val uf = new UnionFind[T]()
     var cur = from
     var nextBuffer: Option[T] = None
@@ -245,7 +257,7 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
         val n = matrix find { kv =>
           val (key, set) = kv
           val nset = set.map(uf.find)
-          if ((nset.size == 1) && nset(cur)) {
+          if ((nset.size == 1) && nset(cur) && predicate(key)) { //TODO: check whether "<= 1" would be better than "== 1"
             cur = uf.union(cur, key)
             matrix -= key
             true
@@ -289,4 +301,33 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](
 
 object ConflictGraph {
   def apply[T <: VertexAndOutgoingEdges[T]]() = new ConflictGraph[T](IMap())
+  def apply[T <: VertexAndOutgoingEdges[T]](uniqNode: T) = new ConflictGraph[T](IMap((uniqNode, ISet[T]())))
+}
+
+class CycleDetectorGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]], val reachPath: Map[T,ISet[T]]) extends AbstractConflictGraph[T](m) {
+
+  def addIfNoCycle(elt: T) = {
+    val (in, out) = getInOut(elt)
+    val eltReachPath = (out /: out) { _ ++ reachPath(_) }
+    if (eltReachPath exists in)
+      None
+    else {
+      val (nMatrix, nReachPath) =
+        ((IMap[T,ISet[T]](elt -> out), IMap[T,ISet[T]](elt -> eltReachPath)) /: matrix.keys) { (p,key) =>
+          val (cMatrix, cReachPath) = p
+          if (in contains key)
+            (cMatrix + (key -> (matrix(key) + elt)), cReachPath + (key -> (reachPath(key) ++ eltReachPath)))
+          else
+            (cMatrix + (key -> matrix(key)), cReachPath + (key -> reachPath(key)))
+        }
+      Some(new CycleDetectorGraph(nMatrix, nReachPath))
+    }
+  }
+
+  def toConflictGraph = new ConflictGraph(matrix)
+
+}
+
+object CycleDetectorGraph {
+  def apply[T <: VertexAndOutgoingEdges[T]]() = new CycleDetectorGraph[T](IMap(), IMap())
 }

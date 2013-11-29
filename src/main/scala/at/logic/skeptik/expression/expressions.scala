@@ -69,4 +69,20 @@ object AppRec {
   } 
 }
 
+object EOrdering extends Ordering[E] {
+  def compare(a: E, b: E):Int = (a,b) match {
+    case (Var(nameA,_), Var(nameB,_)) => nameA compare nameB
+    case (Var(_,_), _) => -1
+    case (_, Var(_,_)) =>  1
+    case (Abs(varA,bodA), Abs(varB,bodB)) =>
+      val cVar = compare(varA, varB)
+      if (cVar == 0) compare(bodA, bodB) else cVar
+    case (App(funA,argA), App(funB,argB)) =>
+      val cFun = compare(funA, funB)
+      if (cFun == 0) compare(argA, argB) else cFun
+    case (App(_,_), _) =>  1
+    case (_, App(_,_)) => -1
+  }
+}
+
 trait Infix extends Var

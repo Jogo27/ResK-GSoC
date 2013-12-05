@@ -69,6 +69,8 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
 
   def outgoings(from: T) = matrix(from)
 
+  def nodes = matrix.keys
+
   def leaves = matrix.keySet filter { matrix(_).isEmpty }
 
   def contains(elt: T) = matrix contains elt
@@ -121,11 +123,11 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
   }
 
   def disconnectedFrom(from: T) = {
-    def reach(reached: ISet[T], todo: Set[T]):ISet[T] = {
+    def reach(reached: ISet[T], todo: Set[T]):Set[T] = {
       // TODO: perhaps this function may be optimized by filtering ourself
-      val filtered = todo filter { elt => matrix(elt) subsetOf reached }
+      val filtered = todo filter { elt => (!matrix(elt).isEmpty) && (matrix(elt) subsetOf reached) }
       if (filtered.isEmpty)
-        reached
+        todo
       else
         reach(reached ++ filtered, todo -- filtered)
     }
@@ -225,12 +227,10 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
 
   /** Topological sort in reversed order
    */
-  def reverseOrder = (matrix find { _._2.isEmpty }) match {
-    case Some((from,_)) =>
-      val map = MMap[T,ISet[T]]()
-      for (other <- matrix.keys) if (other != from) map(other) = matrix(other)
-      new ReverseOrderIterator(map, from, {_ => true})
-    case None => throw new Exception("Cyclic graph")
+  def reverseOrder = {
+    val map = MMap[T,ISet[T]]()
+    for (other <- matrix.keys) map(other) = matrix(other)
+    new ReverseOrderIterator(map, None, {_ => true})
   }
 
   def reverseOrderFrom(from: T):Iterator[T] = collectReverseFrom(from, {_ => true})
@@ -241,10 +241,10 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
     else {
       val map = MMap[T,ISet[T]]()
       for (other <- matrix.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
-      new ReverseOrderIterator(map, from, predicate)
+      new ReverseOrderIterator(map, Some(from), predicate)
     }
 
-  class ReverseOrderIterator(val matrix: MMap[T,ISet[T]], from: T, predicate: T => Boolean) extends Iterator[T] {
+  class ReverseOrderIterator(val matrix: MMap[T,ISet[T]], from: Option[T], predicate: T => Boolean) extends Iterator[T] {
   // Note: predicate is NOT assumed to be a "pure function", making the iterator slower. Perhaps should it be less general and more efficient.
     val uf = new UnionFind[T]()
     var cur = from
@@ -257,8 +257,16 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
         val n = matrix find { kv =>
           val (key, set) = kv
           val nset = set.map(uf.find)
-          if ((nset.size == 1) && nset(cur) && predicate(key)) { //TODO: check whether "<= 1" would be better than "== 1"
-            cur = uf.union(cur, key)
+          val takeIt = nset.size match {
+            case 0 => true
+            case 1 => (!cur.isEmpty) && nset(cur.get)
+            case _ => false
+            }
+          if (takeIt && predicate(key)) {
+            cur = Some(cur match {
+              case Some(c) => uf.union(c, key)
+              case None => key
+            })
             matrix -= key
             true
           }
@@ -296,6 +304,9 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
 
   def aff() =
     for ((from,to) <- edges) println("\""+from+"\" -> \""+to+"\"")
+
+  override def toString() =
+    "ConflictGraph with " + matrix.size + " nodes"
 
 }
 

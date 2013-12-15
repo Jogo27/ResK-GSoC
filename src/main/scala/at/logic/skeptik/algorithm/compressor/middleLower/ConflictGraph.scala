@@ -15,6 +15,7 @@ trait LeafWithoutOutgoingEdges[V] extends VertexAndOutgoingEdges[V] {
 }
 
 class AbstractConflictGraph[T <: VertexAndOutgoingEdges[T]](val matrix: Map[T,ISet[T]]) { // TODO; protect matrix
+
   def getInOut(elt: T) =
     ((ISet[T](), ISet[T]()) /: matrix.keys) { (acc,other) =>
       val (in,out) = acc
@@ -25,6 +26,7 @@ class AbstractConflictGraph[T <: VertexAndOutgoingEdges[T]](val matrix: Map[T,IS
 
 class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) extends AbstractConflictGraph[T](m) {
 //  require(matrix forall { _._2 forall { matrix contains _ } })
+  require(matrix.keys forall { x => matrix.keys forall { y => (x eq y) || ((matrix(x) contains y) == (x edgeTo y)) } })
 
   def +(elt: T) = {
     // This implementation is slow because the matrix is traversed twice.
@@ -79,6 +81,8 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
 
   def size = matrix.size
 
+  def isEmpty = matrix.isEmpty
+
   def hasPath(from: T, to: T) = {
     def search(visited: ISet[T])(from: T):Boolean =
       if (matrix(from) contains to) true
@@ -125,7 +129,7 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
   def disconnectedFrom(from: T) = {
     def reach(reached: ISet[T], todo: Set[T]):Set[T] = {
       // TODO: perhaps this function may be optimized by filtering ourself
-      val filtered = todo filter { elt => (!matrix(elt).isEmpty) && (matrix(elt) subsetOf reached) }
+      val filtered = todo filter { elt => (!matrix(elt).isEmpty) && (matrix(elt) exists reached) }
       if (filtered.isEmpty)
         todo
       else
@@ -227,21 +231,24 @@ class ConflictGraph[T <: VertexAndOutgoingEdges[T]](val m: Map[T,ISet[T]]) exten
 
   /** Topological sort in reversed order
    */
-  def reverseOrder = {
+  def reverseOrder = { //TODO: remove this method and use an Option[T] in reverseOrderFrom instead
     val map = MMap[T,ISet[T]]()
     for (other <- matrix.keys) map(other) = matrix(other)
     new ReverseOrderIterator(map, None, {_ => true})
   }
 
-  def reverseOrderFrom(from: T):Iterator[T] = collectReverseFrom(from, {_ => true})
+  def reverseOrderFrom(from: T):Iterator[T] = collectReverseFrom(Some(from), {_ => true})
 
-  def collectReverseFrom(from: T, predicate: T => Boolean):Iterator[T] =
-    if (matrix contains from)
-      (this - from).collectReverseFrom(from, predicate)
+  def collectReverseFrom(from: Option[T], predicate: T => Boolean):Iterator[T] =
+    if ((!from.isEmpty) && (matrix contains from.get))
+      (this - from.get).collectReverseFrom(from, predicate)
     else {
       val map = MMap[T,ISet[T]]()
-      for (other <- matrix.keys) map(other) = if (other edgeTo from) matrix(other) + from else matrix(other)
-      new ReverseOrderIterator(map, Some(from), predicate)
+      if (from.isEmpty)
+        for (other <- matrix.keys) map(other) = matrix(other)
+      else
+        for (other <- matrix.keys) map(other) = if (other edgeTo from.get) matrix(other) + from.get else matrix(other)
+      new ReverseOrderIterator(map, from, predicate)
     }
 
   class ReverseOrderIterator(val matrix: MMap[T,ISet[T]], from: Option[T], predicate: T => Boolean) extends Iterator[T] {

@@ -4,6 +4,7 @@ import at.logic.skeptik.proof.Proof
 import at.logic.skeptik.proof.sequent._
 import at.logic.skeptik.proof.sequent.lk._
 import at.logic.skeptik.expression.E
+import at.logic.skeptik.judgment.immutable.{SeqSequent => Sequent}
 
 class MiddleLower[T <: ProofBraid[T]] (implicit initBraid: SequentProofNode => T)
 extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
@@ -32,7 +33,12 @@ extends (Proof[SequentProofNode] => Proof[SequentProofNode]) {
             )
             println("\nResolve "+newLeft+" with "+newRight+" on "+resolution.auxL)
             val r = newLeft.resolveWith(newRight, resolution)
+
+            // DEBUG
             println("Resolve result: "+r)
+            val currentConclusion = r.effectiveConclusion
+            println("Resolve before "+resolution.conclusion+" after "+currentConclusion)
+            require(currentConclusion subsequentOf resolution.conclusion)
             r
 
           // Ugly catchall
@@ -53,4 +59,5 @@ trait ProofBraid[T] {
   def resolveWith(other: T, resolution: R):T
   def divise(divisor: Int, pivot: Either[E,E]):T
   def finalMerge:Proof[SequentProofNode]
+  def effectiveConclusion: Sequent
 }

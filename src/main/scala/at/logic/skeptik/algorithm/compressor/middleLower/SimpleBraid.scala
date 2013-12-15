@@ -152,6 +152,8 @@ case class SimpleBraid(
     case _ => throw new Exception("Root node doesn't have all threads")
   }
 
+  def effectiveConclusion = throw new NotImplementedError()
+
 
   // Utils functions
 

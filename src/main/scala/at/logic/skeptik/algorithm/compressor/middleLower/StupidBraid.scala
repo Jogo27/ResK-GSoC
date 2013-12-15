@@ -23,19 +23,20 @@ object r2 {
   private[middleLower] abstract sealed class StThread(val subproof: SequentProofNode) extends VertexAndOutgoingEdges[StThread] {
     def conclusion = subproof.conclusion
     def hasLiteral(lit: Literal) = lit match {
-      case Left(l)  => println("hasLiteral "+l+" in "+conclusion) ; conclusion.ant contains l
-      case Right(l) => println("hasLiteral "+l+" in "+conclusion) ; conclusion.suc contains l
+      case Left(l)  => conclusion.ant contains l
+      case Right(l) => conclusion.suc contains l
+    }
+    def resolvePivot(pivot: Literal) = pivot match  {
+      case Right(l) => conclusion.ant contains l
+      case Left(l)  => conclusion.suc contains l
     }
   }
   private[middleLower] final case class PendingThread(sp: SequentProofNode, val pivot: Either[E,E]) extends StThread(sp) {
-    require(pivot match {
-      case Left(l)  => sp.conclusion.suc contains l
-      case Right(l) => sp.conclusion.ant contains l
-    })
-    def edgeTo(other: StThread) = pivot match {
-      case Left(l)  => other.conclusion.ant contains l
-      case Right(l) => other.conclusion.suc contains l
-    }
+    // TODO; It should be possible for a pending thread to not have its pivot in its conclusion. In such a case, the pivot
+    //       has to be reintroduced by another pending from which this node is reachable in the graph.
+    require(resolvePivot(pivot))
+
+    def edgeTo(other: StThread) = other.hasLiteral(pivot)
     override def toString() =
   //      hashCode().toString() + pivot.toString()
       "PendingThread(" + subproof.conclusion.toString() + "," + pivot.toString() + ")"
@@ -129,6 +130,7 @@ case class StupidBraid(
           ((rightStep4 , activesA, graphA) /: (withPivotRight -- rightDisconnected)) (mergeAfter _)
         else
           (rightStep4, activesA, graphA)
+      println("StepB " + leftStepB + " and " + rightStepB)
 
       val step6 =
         if (leftStepB.main.isEmpty) {
@@ -153,42 +155,76 @@ case class StupidBraid(
         }
       println("Step6 "+step6)
 
+      val (stepC, disconnectedC) = step6.removeDisconnectedPending()
+      if (!disconnectedC.isEmpty) {
+        println("**** There was "+disconnectedC.size+" disconnected pendings before Step7 ****")
+        for (pending <- disconnectedC) println("   * "+pending)
+      }
+
+      // TODO: When pending threads without their pivot would be allowed, care must be taken when merging complete pending.
+      //       The right way to do it is probably to first extract the connected subgraph with only complete pendings,
+      //       then when encountering a pending without its pivot:
+      //        - if some incoming nodes (in the subgraph) have the pivot, merge their correponding branches into the pending
+      //          without its pivot;
+      //        - otherwise, don't merge it.
       def collectCompletedPending(p: StThread) = p match {
-        case pending: PendingThread => step6.actives(pending) == Rational.one
+        case pending: PendingThread => stepC.actives(pending) == Rational.one
         case _ => false
       }
-      val step7 = (step6 /: step6.graph.collectReverseFrom(step6.main.get, collectCompletedPending))
+      val step7 = (stepC /: stepC.graph.collectReverseFrom(stepC.main, collectCompletedPending))
         { _ mergePending _.asInstanceOf[PendingThread] }
 
       // TODO: There should be no disconnected pending at that point
       val (step8, disconnected8) = StupidBraid(step7.main, step7.actives, step7.graph, step7.inactives filter { _._2 < Rational.one }).removeDisconnectedPending()
-      if (!disconnected8.isEmpty) println("**** There was "+disconnected8.size+" disconnected pendings ****")
+      if (!disconnected8.isEmpty) {
+        println("**** There was "+disconnected8.size+" disconnected pendings ****")
+        for (pending <- disconnected8) println("   * "+pending)
+      }
       step8
   }
   
-  def divise(divisor: Int, pivot: Literal) = {
+  def divise(divisor: Int, pivot: Literal):StupidBraid = {
     if (divisor == 1) this else {
       println("\nDivise "+this+" on "+pivot)
-      lazy val nActives   =  actives  mapValues {_ / divisor}
-      lazy val nInactives = inactives mapValues {_ / divisor}
-      main match {
+      val braid = mergeSubgraph(graph.transitiveSubgraph({ _.resolvePivot(pivot) }))
+      lazy val nActives   = braid.actives   mapValues {_ / divisor}
+      lazy val nInactives = braid.inactives mapValues {_ / divisor}
+      braid.main match {
         case None =>
-          StupidBraid(None, nActives, graph, nInactives)
+          StupidBraid(None, nActives, braid.graph, nInactives)
+
+//        // TODO: remove that case and allow pending threads to not have their pivot in their conclusion
+//        case Some(mainThread) if (!mainThread.resolvePivot(pivot)) =>
+//          val subgraph =  graph.transitiveSubgraph({ _.resolvePivot(pivot) })
+//          require(!subgraph.isEmpty)
+//          mergeSubgraph(subgraph).divise(divisor, pivot)
+
         case Some(mainThread) =>
+          require(mainThread.resolvePivot(pivot))
           var nThread = PendingThread(mainThread.subproof, pivot)
-          val (in,out) = graph.getInOut(nThread)
-          val braid = (StupidBraid(Some(mainThread), nActives, graph, nInactives) /: out) {_ mergeBranch _.asInstanceOf[PendingThread]} //TODO don't work for tautologies
-          println("braid "+braid)
-          nThread = PendingThread(braid.main.get.subproof, pivot)
-          StupidBraid(None, braid.actives + (nThread -> Rational.one / divisor), (graph - braid.main.get) + nThread, braid.inactives)
+          val (in,out) = braid.graph.getInOut(nThread)
+          // TODO: Instead of removing mainThread from out, handle tautologies correctly (puting everithing into inactives)
+          val nBraid = (StupidBraid(Some(mainThread), nActives, braid.graph, nInactives) /: (out - mainThread)) {_ mergeBranch _.asInstanceOf[PendingThread]}
+          println("braid "+nBraid)
+          nThread = PendingThread(nBraid.main.get.subproof, pivot)
+          StupidBraid(None, nBraid.actives + (nThread -> Rational.one / divisor), (nBraid.graph - nBraid.main.get) + nThread, nBraid.inactives)
       }
     }
   }
 
   def finalMerge = main match {
-    case Some(mainThread) => mainThread.subproof
+    case Some(mainThread) if (actives.size == 0) => mainThread.subproof
+
+    // TODO: Case when actives is non-empty should never happen. It does because braid division is not done correctly.
+    //       Division should be done whenever the braid has more than one child. Actives and inactives have to be divided by the number of children.
+    //       Only the main thread has to be divided by the number of children with the same pivot (which might be one).
+    //       See bug7.skeptik for a sample proof.
+    case Some(mainThread) => mergeSubgraph(graph).main.get.subproof
+
     case _ => throw new Exception("Root node doesn't have all threads")
   }
+
+  def effectiveConclusion = mergeSubgraph(graph).main.get.conclusion
 
   // New steps functions
   // TODO: rename them
@@ -212,11 +248,25 @@ case class StupidBraid(
       (nFrom, nTo)
     }
 
+    // TODO: Make single argument
     def checkPivot(pivot: Literal)(withPivot: ISet[PendingThread], pending: PendingThread) =
       if (pending.hasLiteral(pivot)) (withPivot + pending) else withPivot
 
-    def oneSide(it: Iterator[PendingThread], pivot: Literal, withPivot: ISet[PendingThread]): ISet[PendingThread] =
-      (withPivot /: it)(checkPivot(pivot))
+    def oneSide(curPending: PendingThread, it: Iterator[PendingThread], pivot: Literal, withPivot: ISet[PendingThread]): ISet[PendingThread] = {
+      println(" # One "+pivot+" start with "+withPivot)
+//      (withPivot /: it)(checkPivot(pivot))
+      def aux(cur: PendingThread, acc: ISet[PendingThread]): ISet[PendingThread] = {
+        println("   --> "+cur)
+        val nAcc = checkPivot(pivot)(acc, cur)
+        if (it.hasNext) {
+          aux(it.next, nAcc)
+        }
+        else
+          nAcc
+      }
+
+      aux(curPending, withPivot)
+    }
 
     def twoSides( curPendingLeft: PendingThread,  leftBraid: StupidBraid,  withPivotLeft: ISet[PendingThread],
                   shared: ISet[PendingThread],
@@ -224,48 +274,57 @@ case class StupidBraid(
       (StupidBraid, ISet[PendingThread], ISet[PendingThread], StupidBraid, ISet[PendingThread]) =
       PendingThreadOrdering.compare(curPendingLeft, curPendingRight) match {
         case n if (n < 0) =>
-          println(" # Neg "+withPivotLeft+" and "+withPivotRight)
-          if (leftIt.hasNext) {
-            val withPivot = checkPivot(leftPivot)(withPivotLeft, curPendingLeft)
-            twoSides(leftIt.next, leftBraid, withPivot, shared, curPendingRight, rightBraid, withPivotRight)
-          }
+          println(" # Neg "+withPivotLeft+" and "+withPivotRight+" => "+curPendingLeft)
+          val nWithPivotLeft = checkPivot(leftPivot)(withPivotLeft, curPendingLeft)
+          if (leftIt.hasNext)
+            twoSides(leftIt.next, leftBraid, nWithPivotLeft, shared, curPendingRight, rightBraid, withPivotRight)
           else {
-            val withPivot = oneSide(rightIt, rightPivot, withPivotRight)
-            (leftBraid, withPivotLeft, shared, rightBraid, withPivot)
+            val nWithPivotRight = oneSide(curPendingRight, rightIt, rightPivot, withPivotRight)
+            (leftBraid, nWithPivotLeft, shared, rightBraid, nWithPivotRight)
           }
         case p if (p > 0) =>
-          println(" # Pos "+withPivotLeft+" and "+withPivotRight)
-          if (rightIt.hasNext) {
-            val withPivot = checkPivot(rightPivot)(withPivotRight, curPendingRight)
-            twoSides(curPendingLeft, leftBraid, withPivotLeft, shared, rightIt.next, rightBraid, withPivot)
-          }
+          println(" # Pos "+withPivotLeft+" and "+withPivotRight+" => "+curPendingRight)
+          val nWithPivotRight = checkPivot(rightPivot)(withPivotRight, curPendingRight)
+          if (rightIt.hasNext)
+            twoSides(curPendingLeft, leftBraid, withPivotLeft, shared, rightIt.next, rightBraid, nWithPivotRight)
           else {
-            val withPivot = oneSide(leftIt, leftPivot, withPivotLeft)
-            (leftBraid, withPivot, shared, rightBraid, withPivotRight)
+            val nWithPivotLeft = oneSide(curPendingLeft, leftIt, leftPivot, withPivotLeft)
+            println(" ## End neg with"+nWithPivotLeft)
+            (leftBraid, nWithPivotLeft, shared, rightBraid, nWithPivotRight)
           }
         case 0 if (curPendingLeft.subproof eq curPendingRight.subproof) =>
           println(" # Sam "+withPivotLeft+" and "+withPivotRight)
           nextBoth(leftBraid, withPivotLeft, shared + curPendingLeft, rightBraid, withPivotRight)
-        case 0 => (curPendingLeft.hasLiteral(leftPivot), curPendingRight.hasLiteral(rightPivot)) match {
-          case (false, true) =>
-            val (nLeft, nRight) = replacePending(leftBraid, curPendingLeft, rightBraid, curPendingRight)
-            val withPivot = checkPivot(rightPivot)(withPivotRight, curPendingLeft)
-            nextBoth(nLeft, withPivotLeft, shared + curPendingLeft, nRight, withPivot)
-          case (true, false) =>
-            val (nRight, nLeft) = replacePending(rightBraid, curPendingRight, leftBraid, curPendingLeft)
-            val withPivot = checkPivot(leftPivot)(withPivotLeft, curPendingRight)
-            nextBoth(nLeft, withPivot, shared + curPendingRight, nRight, withPivotRight)
-          case (true,true) => //TODO: Don't really know what to do in that case. Some improvements may be possible.
-            nextBoth(leftBraid, withPivotLeft + curPendingLeft, shared, rightBraid, withPivotRight + curPendingRight)
-          case (false, false) if (curPendingLeft.conclusion.size < curPendingRight.conclusion.size) =>
-            val (nLeft, nRight) = replacePending(leftBraid, curPendingLeft, rightBraid, curPendingRight)
-            val withPivot = checkPivot(rightPivot)(withPivotRight, curPendingLeft)
-            nextBoth(nLeft, withPivotLeft, shared + curPendingLeft, nRight, withPivot)
-          case _ =>
-            val (nRight, nLeft) = replacePending(rightBraid, curPendingRight, leftBraid, curPendingLeft)
-            val withPivot = checkPivot(leftPivot)(withPivotLeft, curPendingRight)
-            nextBoth(nLeft, withPivot, shared + curPendingRight, nRight, withPivotRight)
-        }
+        case 0 =>
+          println(" # Dif "+withPivotLeft+" and "+withPivotRight)
+          val leftBranch  =  leftBraid.graph.transitiveSubgraph({_ eq curPendingLeft})
+          val rightBranch = rightBraid.graph.transitiveSubgraph({_ eq curPendingRight})
+          val nWithPivotLeft  = checkPivot(leftPivot) (withPivotLeft,  curPendingLeft)
+          val nWithPivotRight = checkPivot(rightPivot)(withPivotRight, curPendingRight)
+          if (leftBranch.size < rightBranch.size)
+            nextBoth(leftBraid mergeSubgraph leftBranch, nWithPivotLeft, shared, rightBraid, nWithPivotRight)
+          else 
+            nextBoth(leftBraid, nWithPivotLeft, shared, rightBraid mergeSubgraph rightBranch, nWithPivotRight)
+//        case 0 => (curPendingLeft.hasLiteral(leftPivot), curPendingRight.hasLiteral(rightPivot)) match {
+//          case (false, true) =>
+//            val (nLeft, nRight) = replacePending(leftBraid, curPendingLeft, rightBraid, curPendingRight)
+//            val withPivot = checkPivot(rightPivot)(withPivotRight, curPendingLeft)
+//            nextBoth(nLeft, withPivotLeft, shared + curPendingLeft, nRight, withPivot)
+//          case (true, false) =>
+//            val (nRight, nLeft) = replacePending(rightBraid, curPendingRight, leftBraid, curPendingLeft)
+//            val withPivot = checkPivot(leftPivot)(withPivotLeft, curPendingRight)
+//            nextBoth(nLeft, withPivot, shared + curPendingRight, nRight, withPivotRight)
+//          case (true,true) => //TODO: Don't really know what to do in that case. Some improvements may be possible.
+//            nextBoth(leftBraid, withPivotLeft + curPendingLeft, shared, rightBraid, withPivotRight + curPendingRight)
+//          case (false, false) if (curPendingLeft.conclusion.size < curPendingRight.conclusion.size) =>
+//            val (nLeft, nRight) = replacePending(leftBraid, curPendingLeft, rightBraid, curPendingRight)
+//            val withPivot = checkPivot(rightPivot)(withPivotRight, curPendingLeft)
+//            nextBoth(nLeft, withPivotLeft, shared + curPendingLeft, nRight, withPivot)
+//          case _ =>
+//            val (nRight, nLeft) = replacePending(rightBraid, curPendingRight, leftBraid, curPendingLeft)
+//            val withPivot = checkPivot(leftPivot)(withPivotLeft, curPendingRight)
+//            nextBoth(nLeft, withPivot, shared + curPendingRight, nRight, withPivotRight)
+//        }
       }
           
     def nextBoth( leftBraid: StupidBraid, withPivotLeft: ISet[PendingThread],
@@ -274,10 +333,10 @@ case class StupidBraid(
       (leftIt.hasNext, rightIt.hasNext) match {
         case (false, false) => (leftBraid, withPivotLeft, shared, rightBraid, withPivotRight)
         case (false, true) =>
-            val withPivot = oneSide(rightIt, rightPivot, withPivotRight)
+            val withPivot = oneSide(rightIt.next, rightIt, rightPivot, withPivotRight)
             (leftBraid, withPivotLeft, shared, rightBraid, withPivot)
         case (true, false) =>
-            val withPivot = oneSide(leftIt, leftPivot, withPivotLeft)
+            val withPivot = oneSide(leftIt.next, leftIt, leftPivot, withPivotLeft)
             (leftBraid, withPivot, shared, rightBraid, withPivotRight)
         case (true, true) =>
             twoSides(leftIt.next, leftBraid, withPivotLeft, shared, rightIt.next, rightBraid, withPivotRight)
@@ -380,7 +439,7 @@ case class StupidBraid(
   // pending methods
 
   def mergePending(thread: PendingThread) = {
-//    println("Merging "+subproof.conclusion+" into "+(main map {_.conclusion}).toString()+" on "+pivot)
+    println("Merging "+thread.conclusion+" into "+(main map {_.conclusion}).toString()+" on "+thread.pivot)
     val fraction = actives(thread)
     val subproof = thread.subproof
     val (nMain, nGraph: ConflictGraph[StThread]) = (main, thread.pivot) match {
@@ -393,7 +452,10 @@ case class StupidBraid(
 
   def mergeBranch(thread: PendingThread) =
     // TODO: optimize
-    (this /: graph.transitiveSubgraph({_ eq thread}).reverseOrder) {
+    mergeSubgraph(graph.transitiveSubgraph({_ == thread}))
+
+  def mergeSubgraph(subgraph: ConflictGraph[StThread]) =
+    (this /: subgraph.reverseOrder) {
       case (braid, pending: PendingThread) => braid mergePending pending
       case (braid, _) => braid
     }
